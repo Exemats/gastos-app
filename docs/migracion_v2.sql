@@ -221,10 +221,55 @@ create policy "auth_all_update" on public.presupuestos for update to authenticat
 create policy "auth_all_delete" on public.presupuestos for delete to authenticated using (true);
 
 
+-- ---------------------------------------------------------------------
+-- 8. TIEMPO REAL + NOTIFICACIONES PUSH
+-- a) Realtime: lo que carga uno aparece al instante en el celu del otro.
+--    (postgres_changes respeta RLS: los personales del otro no viajan.)
+-- b) push_subs: suscripciones de notificaciones push de cada dispositivo.
+-- ---------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  foreach t in array array['movimientos', 'deudas', 'meses_saldados'] loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
+
+create table if not exists public.push_subs (
+  endpoint      text primary key,
+  profile_id    uuid not null references public.profiles (id) on delete cascade,
+  subscription  jsonb not null,
+  created_at    timestamptz not null default now()
+);
+
+comment on table public.push_subs is
+  'Suscripciones web push: una fila por dispositivo. El servidor (service role) las usa para mandar avisos.';
+
+alter table public.push_subs enable row level security;
+
+drop policy if exists "subs_propias_select" on public.push_subs;
+drop policy if exists "subs_propias_insert" on public.push_subs;
+drop policy if exists "subs_propias_update" on public.push_subs;
+drop policy if exists "subs_propias_delete" on public.push_subs;
+create policy "subs_propias_select" on public.push_subs for select to authenticated
+  using (profile_id = auth.uid());
+create policy "subs_propias_insert" on public.push_subs for insert to authenticated
+  with check (profile_id = auth.uid());
+create policy "subs_propias_update" on public.push_subs for update to authenticated
+  using (profile_id = auth.uid()) with check (profile_id = auth.uid());
+create policy "subs_propias_delete" on public.push_subs for delete to authenticated
+  using (profile_id = auth.uid());
+
+
 -- =====================================================================
 -- FIN. Después de correr esto:
 --   1. Verificá: select nombre, porcentaje, telefono from profiles;
 --   2. Verificá: select * from meses_saldados; (vacía, pero existe)
 --   3. Habilitá Google como provider (ver README, sección "Login con Google").
---   4. Deployá la app nueva con las env vars nuevas.
+--   4. Deployá la app nueva con las env vars nuevas (VAPID incluidas).
 -- =====================================================================

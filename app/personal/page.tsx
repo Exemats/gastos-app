@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { plata, nombreMes, fechaCorta, hoyISO, mesShift } from '@/lib/format'
 import type { Movimiento } from '@/lib/types'
 import Nav from '@/components/Nav'
+import { useRealtime } from '@/lib/use-realtime'
 
 /**
  * Sección privada: tus gastos personales. No se dividen, no tocan el
@@ -40,6 +41,7 @@ export default function PersonalPage() {
   useEffect(() => {
     cargar()
   }, [cargar])
+  useRealtime(cargar)
 
   const movsMes = useMemo(() => movs.filter((m) => m.fecha.startsWith(mes)), [movs, mes])
   const total = movsMes.reduce((a, m) => a + Number(m.monto), 0)

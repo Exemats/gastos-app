@@ -7,6 +7,7 @@ import {
   coincideNombre,
 } from './parsear-gasto'
 import { hoyArgentina, nombreMes, plata } from './format'
+import { avisarMovimiento, avisarDeuda } from './avisos'
 
 /**
  * Lógica común de carga de gastos desde afuera de la app
@@ -107,16 +108,21 @@ export async function registrarGasto(
   if (fijoCatalogo?.paga_tercero) {
     const parte =
       Math.round(monto * Number(fijoCatalogo.prop_tercero ?? 0.5) * 100) / 100
-    const { error } = await supabase.from('deudas').insert({
-      descripcion: `${descripcion} ${nombreMes(fecha.slice(0, 7))}`,
-      acreedor_tipo: 'externo',
-      acreedor_nombre: fijoCatalogo.paga_tercero,
-      deudor: pagador.id,
-      monto_total: parte,
-      cantidad_cuotas: 1,
-      fecha_primera_cuota: fecha,
-    })
+    const { data: creada, error } = await supabase
+      .from('deudas')
+      .insert({
+        descripcion: `${descripcion} ${nombreMes(fecha.slice(0, 7))}`,
+        acreedor_tipo: 'externo',
+        acreedor_nombre: fijoCatalogo.paga_tercero,
+        deudor: pagador.id,
+        monto_total: parte,
+        cantidad_cuotas: 1,
+        fecha_primera_cuota: fecha,
+      })
+      .select('id')
+      .single()
     if (error) return { ok: false, mensaje: `Error al guardar: ${error.message}` }
+    if (creada) await avisarDeuda(supabase, creada.id, pagador.id)
     return {
       ok: true,
       mensaje: `Anotado ✓ ${descripcion}: la mitad de ${pagador.nombre} (${plata(parte)}) quedó como deuda con ${fijoCatalogo.paga_tercero}.`,
@@ -124,25 +130,30 @@ export async function registrarGasto(
   }
 
   // --- 4. insertar movimiento ---
-  const { error } = await supabase.from('movimientos').insert({
-    tipo: esPersonal ? 'gasto_depto' : tipo,
-    fecha,
-    descripcion,
-    monto,
-    pagado_por: pagador.id,
-    categoria,
-    // es_personal va solo cuando hace falta: lo compartido funciona
-    // aunque la migración v2 todavía no se haya corrido
-    ...(esPersonal
-      ? { prop_pagador: 1, es_personal: true }
-      : {
-          prop_pagador:
-            tipo === 'gasto_fijo'
-              ? Number(fijoCatalogo?.prop_pagador ?? 0.5) // servicios: mitad y mitad
-              : null,
-        }),
-  })
+  const { data: creado, error } = await supabase
+    .from('movimientos')
+    .insert({
+      tipo: esPersonal ? 'gasto_depto' : tipo,
+      fecha,
+      descripcion,
+      monto,
+      pagado_por: pagador.id,
+      categoria,
+      // es_personal va solo cuando hace falta: lo compartido funciona
+      // aunque la migración v2 todavía no se haya corrido
+      ...(esPersonal
+        ? { prop_pagador: 1, es_personal: true }
+        : {
+            prop_pagador:
+              tipo === 'gasto_fijo'
+                ? Number(fijoCatalogo?.prop_pagador ?? 0.5) // servicios: mitad y mitad
+                : null,
+          }),
+    })
+    .select('id')
+    .single()
   if (error) return { ok: false, mensaje: `Error al guardar: ${error.message}` }
+  if (creado && !esPersonal) await avisarMovimiento(supabase, creado.id, pagador.id)
 
   const division = esPersonal
     ? 'personal'

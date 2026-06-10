@@ -18,6 +18,7 @@ import type { Deuda, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/
 import Nav from '@/components/Nav'
 import TacharMes from '@/components/TacharMes'
 import EditarMovimiento from '@/components/EditarMovimiento'
+import { useRealtime } from '@/lib/use-realtime'
 
 type Filtro = 'todos' | 'compartidos' | 'mios'
 
@@ -75,6 +76,7 @@ export default function ResumenPage() {
   useEffect(() => {
     cargar()
   }, [cargar])
+  useRealtime(cargar)
 
   // --- movimientos del mes elegido ---
   const movsMes = useMemo(() => movs.filter((m) => m.fecha.startsWith(mes)), [movs, mes])

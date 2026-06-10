@@ -1,8 +1,15 @@
 import { registrarGasto } from '@/lib/ingesta'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { textoWhatsApp, botonesWhatsApp } from '@/lib/whatsapp'
+import { resumenSaldo, netoDelMes, avisarTachado } from '@/lib/avisos'
+import { sinAcentos } from '@/lib/parsear-gasto'
+import { nombreMes, nombreMesCorto, plata } from '@/lib/format'
 
 /**
  * Webhook de WhatsApp (Meta Cloud API). Mandás "12500 súper" al número
- * del bot y queda anotado; el bot contesta la confirmación.
+ * del bot y queda anotado; el bot contesta la confirmación. Además:
+ *   - "saldo" / "resumen": estado actual + botón para tachar el mes
+ *     anterior si quedó pendiente (botones nativos de Meta).
  *
  * Env necesarias:
  *   WHATSAPP_VERIFY_TOKEN  inventado por vos, para verificar el webhook
@@ -45,29 +52,65 @@ async function firmaValida(raw: string, firma: string | null) {
   return hex === firma.slice('sha256='.length)
 }
 
-async function responder(a: string, texto: string) {
-  const token = process.env.WHATSAPP_TOKEN
-  const phoneId = process.env.WHATSAPP_PHONE_ID
-  if (!token || !phoneId) return
-  try {
-    await fetch(`https://graph.facebook.com/v23.0/${phoneId}/messages`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: a,
-        text: { body: texto },
-      }),
-    })
-  } catch {
-    // responder es best-effort; el gasto ya quedó (o no) registrado
+type MensajeWhatsApp = {
+  type?: string
+  from?: string
+  text?: { body?: string }
+  interactive?: { button_reply?: { id?: string } }
+}
+
+const soloDigitos = (s: string) => s.replace(/\D/g, '')
+
+async function perfilPorTelefono(telefono: string) {
+  const admin = createAdminClient()
+  const { data } = await admin.from('profiles').select('id, nombre, telefono')
+  return (
+    (data ?? []).find(
+      (p) => p.telefono && soloDigitos(p.telefono) === soloDigitos(telefono)
+    ) ?? null
+  )
+}
+
+/** "saldo" / "resumen": estado + botón de tachar si el mes pasado está pendiente. */
+async function responderSaldo(a: string) {
+  const admin = createAdminClient()
+  const { texto, paraTachar } = await resumenSaldo(admin)
+  if (paraTachar) {
+    await botonesWhatsApp(a, texto, [
+      { id: `tachar_${paraTachar.mes}`, titulo: `✓ Tachar ${nombreMesCorto(paraTachar.mes)}` },
+    ])
+  } else {
+    await textoWhatsApp(a, texto)
   }
 }
 
-type MensajeWhatsApp = { type?: string; from?: string; text?: { body?: string } }
+/** Botón "✓ Tachar {mes}": registra el tachado como si fuera desde la app. */
+async function tacharDesdeChat(a: string, mes: string) {
+  const admin = createAdminClient()
+  const perfil = await perfilPorTelefono(a)
+  if (!perfil) {
+    await textoWhatsApp(a, 'Tu número no está vinculado a ningún perfil.')
+    return
+  }
+  const neto = await netoDelMes(admin, mes)
+  const { error } = await admin.from('meses_saldados').upsert(
+    {
+      mes,
+      monto: neto ? Math.round(neto.monto * 100) / 100 : null,
+      saldado_por: perfil.id,
+    },
+    { onConflict: 'mes' }
+  )
+  if (error) {
+    await textoWhatsApp(a, `No pude tachar: ${error.message}`)
+    return
+  }
+  await avisarTachado(admin, mes, perfil.id)
+  await textoWhatsApp(
+    a,
+    `✓ ${nombreMes(mes)} tachado${neto ? ` (se transfirieron ${plata(neto.monto)})` : ''}. A mano.`
+  )
+}
 
 export async function POST(request: Request) {
   const raw = await request.text()
@@ -83,17 +126,34 @@ export async function POST(request: Request) {
   }
 
   // estructura del webhook: entry[].changes[].value.messages[]
-  const entradas = (payload as { entry?: { changes?: { value?: { messages?: MensajeWhatsApp[] } }[] }[] })
-    ?.entry ?? []
+  const entradas =
+    (payload as { entry?: { changes?: { value?: { messages?: MensajeWhatsApp[] } }[] }[] })
+      ?.entry ?? []
   const mensajes = entradas
     .flatMap((e) => e?.changes ?? [])
     .flatMap((c) => c?.value?.messages ?? [])
 
   for (const msg of mensajes) {
-    if (msg?.type !== 'text' || !msg.from) continue
+    if (!msg?.from) continue
+
+    // botón "✓ Tachar {mes}"
+    if (msg.type === 'interactive') {
+      const id = msg.interactive?.button_reply?.id
+      if (id?.startsWith('tachar_')) await tacharDesdeChat(msg.from, id.slice(7))
+      continue
+    }
+
+    if (msg.type !== 'text') continue
     const texto = msg.text?.body ?? ''
+    const comando = sinAcentos(texto.trim())
+
+    if (comando === 'saldo' || comando === 'resumen') {
+      await responderSaldo(msg.from)
+      continue
+    }
+
     const r = await registrarGasto({ texto, telefono: msg.from })
-    await responder(msg.from, r.mensaje)
+    await textoWhatsApp(msg.from, r.mensaje)
   }
 
   // siempre 200 rápido para que Meta no reintente
