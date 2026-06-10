@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Sistema de diseño — "Libreta de fiado"
+   Cuaderno cuadriculado + tinta azul. Deuda en rojo, crédito
+   en verde (estar en rojo / estar en verde, como en el almacén).
+   ============================================================ */
+:root {
+  --papel: #fbfaf4;
+  --papel-card: #ffffff;
+  --cuadricula: rgba(45, 79, 161, 0.07);
+  --tinta: #1c2742;
+  --tinta-suave: #5d6884;
+  --birome: #2d4fa1;
+  --birome-suave: #e8edf9;
+  --rojo: #bb3a2e;
+  --rojo-suave: #f9e9e7;
+  --verde: #1e7a4a;
+  --verde-suave: #e6f3ec;
+  --linea: #d9d6c8;
+  --radius: 10px;
+}
+
+@theme inline {
+  --color-papel: var(--papel);
+  --color-card: var(--papel-card);
+  --color-tinta: var(--tinta);
+  --color-tinta-suave: var(--tinta-suave);
+  --color-birome: var(--birome);
+  --color-birome-suave: var(--birome-suave);
+  --color-rojo: var(--rojo);
+  --color-rojo-suave: var(--rojo-suave);
+  --color-verde: var(--verde);
+  --color-verde-suave: var(--verde-suave);
+  --color-linea: var(--linea);
+  --font-display: "Fraunces", Georgia, serif;
+  --font-body: "Instrument Sans", system-ui, -apple-system, sans-serif;
+  --font-mono-num: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+html {
+  background: var(--papel);
+}
+
+body {
+  color: var(--tinta);
+  font-family: var(--font-body);
+  /* cuaderno cuadriculado, sutil */
+  background-color: var(--papel);
+  background-image:
+    linear-gradient(var(--cuadricula) 1px, transparent 1px),
+    linear-gradient(90deg, var(--cuadricula) 1px, transparent 1px);
+  background-size: 24px 24px;
+  min-height: 100dvh;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.num {
+  font-family: var(--font-mono-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.card {
+  background: var(--papel-card);
+  border: 1px solid var(--linea);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgba(28, 39, 66, 0.05);
+}
+
+.input {
+  width: 100%;
+  border: 1px solid var(--linea);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  font-size: 16px; /* evita zoom de iOS */
+  color: var(--tinta);
+  outline: none;
+}
+.input:focus-visible {
+  border-color: var(--birome);
+  box-shadow: 0 0 0 3px var(--birome-suave);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 11px 16px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: filter 0.12s ease, background 0.12s ease;
+}
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn-primario { background: var(--birome); color: #fff; }
+.btn-primario:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-secundario { background: #fff; color: var(--tinta); border-color: var(--linea); }
+.btn-secundario:hover:not(:disabled) { background: var(--birome-suave); }
+.btn-peligro { background: var(--rojo); color: #fff; }
+
+.chip {
+  border: 1px solid var(--linea);
+  background: #fff;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--tinta);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.chip[data-activo="true"] {
+  background: var(--tinta);
+  border-color: var(--tinta);
+  color: var(--papel);
+}
+
+/* renglones de libreta para el saldo */
+.renglones {
+  background-image: repeating-linear-gradient(
+    transparent,
+    transparent 35px,
+    var(--linea) 35px,
+    var(--linea) 36px
+  );
+}
+
+a { -webkit-tap-highlight-color: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
