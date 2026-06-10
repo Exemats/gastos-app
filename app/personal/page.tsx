@@ -61,7 +61,7 @@ export default function PersonalPage() {
   const esMesActual = mes === hoyISO().slice(0, 7)
 
   return (
-    <main className="mx-auto max-w-md px-4 pb-28 pt-6">
+    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-2xl">
       <h1 className="text-2xl">Lo tuyo 🔒</h1>
       <p className="mb-4 mt-1 text-sm text-tinta-suave">
         Gastos personales: no se dividen, no tocan el saldo y solo vos los ves.

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { calcularBalance, plata, nombreMes, hoyArgentina } from '@/lib/format'
-import type { Deuda, MesSaldado, Movimiento, Profile } from '@/lib/types'
+import { coincideNombre } from '@/lib/parsear-gasto'
+import type { Deuda, GastoFijo, MesSaldado, Movimiento, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
 import LogoutButton from '@/components/LogoutButton'
 import PerfilSetup from '@/components/PerfilSetup'
@@ -20,13 +21,17 @@ export default async function Dashboard() {
     { data: movimientos },
     { data: deudas },
     { data: saldados, error: errorSaldados },
+    { data: fijos },
   ] = await Promise.all([
     supabase.from('profiles').select('id, nombre, porcentaje'),
     // select('*'): si la migración v2 no corrió aún, es_personal no existe
     // y un select explícito rompería todo el dashboard
     supabase.from('movimientos').select('*').order('fecha', { ascending: false }),
-    supabase.from('deudas').select('*').eq('activa', true),
+    // todas (no solo activas): una deuda de Expensas ya saldada igual cuenta
+    // como "cargada este mes" para el recordatorio de fijos
+    supabase.from('deudas').select('*'),
     supabase.from('meses_saldados').select('*'),
+    supabase.from('gastos_fijos').select('*').eq('activo', true).order('nombre'),
   ])
 
   // si la tabla nueva no existe, la migración no se corrió: avisamos
@@ -85,11 +90,27 @@ export default async function Dashboard() {
     .reduce((acc, m) => acc + Number(m.monto), 0)
 
   // --- cuotas del mes ---
-  const deudasActivas = (deudas ?? []) as Deuda[]
+  const deudasTodas = (deudas ?? []) as Deuda[]
+  const deudasActivas = deudasTodas.filter((d) => d.activa)
   const totalCuotasMes = deudasActivas.reduce(
     (acc, d) => acc + Number(d.valor_cuota),
     0
   )
+
+  // --- fijos que faltan cargar este mes (luz, gas, expensas…) ---
+  const fijosCatalogo = (fijos ?? []) as GastoFijo[]
+  const fijosPendientes = fijosCatalogo.filter((f) => {
+    if (f.paga_tercero) {
+      // Expensas: se carga como deuda con el tercero, no como movimiento
+      return !deudasTodas.some(
+        (d) =>
+          coincideNombre(d.descripcion, f.nombre) &&
+          (d.created_at?.startsWith(mesActual) ||
+            d.fecha_primera_cuota?.startsWith(mesActual))
+      )
+    }
+    return !movsMes.some((m) => coincideNombre(m.descripcion, f.nombre))
+  })
 
   const ultimos = compartidos.slice(0, 5)
 
@@ -97,7 +118,7 @@ export default async function Dashboard() {
     yo && (yo.nombre === 'Nuevo' || perfilesOk.length < 2 || !otro)
 
   return (
-    <main className="mx-auto max-w-md px-4 pb-28 pt-6">
+    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-4xl">
       <header className="mb-5 flex items-baseline justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-birome">
@@ -124,6 +145,8 @@ export default async function Dashboard() {
         <PerfilSetup perfil={yo} hayOtro={Boolean(otro)} />
       )}
 
+      <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-6">
+      <div>
       {/* Saldo pendiente — la entrada de libreta */}
       <section className="card renglones mb-4 p-5">
         <p className="text-sm font-medium text-tinta-suave">Entre los dos</p>
@@ -203,6 +226,31 @@ export default async function Dashboard() {
         )}
       </section>
 
+      {/* Fijos que faltan este mes */}
+      {fijosPendientes.length > 0 && (
+        <section className="card mb-4 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-tinta-suave">
+            Fijos que faltan este mes
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {fijosPendientes.map((f) => (
+              <Link
+                key={f.id}
+                href={`/nuevo?fijo=${encodeURIComponent(f.nombre)}`}
+                className="chip"
+              >
+                + {f.nombre}
+                {f.dia_vencimiento ? (
+                  <span className="text-tinta-suave"> · vence el {f.dia_vencimiento}</span>
+                ) : null}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+      </div>
+
+      <div>
       {/* Resumen del mes */}
       <section className="mb-3 grid grid-cols-2 gap-3">
         <Link href="/resumen" className="card block p-4">
@@ -272,6 +320,8 @@ export default async function Dashboard() {
           </ul>
         )}
       </section>
+      </div>
+      </div>
       <Nav />
     </main>
   )

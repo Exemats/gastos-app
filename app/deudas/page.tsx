@@ -54,7 +54,7 @@ export default function DeudasPage() {
     perfiles.find((p) => p.id === id)?.nombre ?? '—'
 
   return (
-    <main className="mx-auto max-w-md px-4 pb-28 pt-6">
+    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-2xl">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl">Deudas en cuotas</h1>
         <button className="btn btn-primario !py-2 !text-sm" onClick={() => setMostrarForm((v) => !v)}>

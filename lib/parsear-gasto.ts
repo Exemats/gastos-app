@@ -102,6 +102,17 @@ export function normalizarCategoria(cat?: string | null): string | null {
   return directa ?? cat.trim().toLowerCase()
 }
 
+/**
+ * ¿La descripción corresponde a este fijo del catálogo? Coincide la palabra
+ * completa ("Expensas junio" ↔ "Expensas") pero no un prefijo suelto
+ * ("Gaseosas" NO es el fijo "Gas").
+ */
+export function coincideNombre(descripcion: string, nombre: string) {
+  const d = sinAcentos(descripcion.trim())
+  const n = sinAcentos(nombre.trim())
+  return d === n || d.startsWith(n + ' ')
+}
+
 export function parsearGasto(
   texto: string,
   nombresPerfiles: string[] = []
