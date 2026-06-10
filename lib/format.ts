@@ -29,6 +29,21 @@ export function nombreMes(yyyyMm: string) {
   return `${MESES[m - 1]} ${y}`
 }
 
+export function nombreMesCorto(yyyyMm: string) {
+  const m = Number(yyyyMm.split('-')[1])
+  return MESES[m - 1].slice(0, 3)
+}
+
+const fmtCompacto = new Intl.NumberFormat('es-AR', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+})
+
+/** "$1,2 M" / "$45 mil" — para etiquetas de gráficos. */
+export function plataCompacta(n: number) {
+  return `$${fmtCompacto.format(n)}`
+}
+
 export function fechaCorta(iso: string) {
   const [y, m, d] = iso.slice(0, 10).split('-').map(Number)
   return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${String(y).slice(2)}`

@@ -155,6 +155,72 @@ create policy "auth_all_delete" on public.meses_saldados for delete to authentic
 -- on conflict do nothing;
 
 
+-- ---------------------------------------------------------------------
+-- 6. CÓMO SE DIVIDE CADA GASTO FIJO
+-- Reglas reales de la casa:
+--   - Luz, Gas, Internet, Agua y ABL: mitad y mitad con Vicky (50/50).
+--   - Expensas: las paga Seba; al cargarlas no se crea un movimiento sino
+--     una DEUDA con Seba por la mitad de quien las carga (se suma a las
+--     otras deudas con Seba y se tacha en Cuotas cuando se le paga).
+-- ---------------------------------------------------------------------
+alter table public.gastos_fijos
+  add column if not exists prop_pagador numeric(4,3)
+    check (prop_pagador is null or (prop_pagador >= 0 and prop_pagador <= 1));
+
+alter table public.gastos_fijos
+  add column if not exists paga_tercero text;
+
+alter table public.gastos_fijos
+  add column if not exists prop_tercero numeric(4,3)
+    check (prop_tercero is null or (prop_tercero >= 0 and prop_tercero <= 1));
+
+comment on column public.gastos_fijos.prop_pagador is
+  'Division del fijo al cargarlo: 0.5 = mitad y mitad. NULL = porcentaje del perfil del pagador.';
+comment on column public.gastos_fijos.paga_tercero is
+  'Si lo paga un tercero (ej Seba): cargarlo crea una deuda con el por prop_tercero (default 0.5) del total, en vez de un movimiento.';
+
+update public.gastos_fijos set prop_pagador = 0.5
+  where lower(nombre) in ('luz', 'gas', 'internet', 'agua', 'abl');
+
+update public.gastos_fijos set paga_tercero = 'Seba', prop_tercero = 0.5
+  where lower(nombre) = 'expensas';
+
+-- (Opcional) si los servicios YA cargados también eran mitad y mitad de
+-- verdad, corregí los que quedaron divididos 65/35. Ojo: cambia el neto
+-- de los meses sin tachar (los tachados van a mostrar un aviso).
+-- update public.movimientos set prop_pagador = 0.5
+--   where tipo = 'gasto_fijo' and prop_pagador is null;
+
+-- (Opcional) los gastos viejos marcados "100% de quien lo pagó" ahora son
+-- personales (la carga nueva los manda directo a la sección Personal):
+-- update public.movimientos set es_personal = true
+--   where prop_pagador = 1 and es_personal = false;
+
+
+-- ---------------------------------------------------------------------
+-- 7. PRESUPUESTOS POR CATEGORÍA (opcionales)
+-- Límite mensual por categoría de lo compartido. La barra del Resumen
+-- se pone en ámbar al pasar el 80% y en rojo al pasarse del límite.
+-- Se cargan desde la app (lápiz en "Por categoría") o por SQL.
+-- ---------------------------------------------------------------------
+create table if not exists public.presupuestos (
+  categoria   text primary key,
+  monto       numeric(12,2) not null check (monto > 0),
+  created_at  timestamptz not null default now()
+);
+
+alter table public.presupuestos enable row level security;
+
+drop policy if exists "auth_all_select" on public.presupuestos;
+drop policy if exists "auth_all_insert" on public.presupuestos;
+drop policy if exists "auth_all_update" on public.presupuestos;
+drop policy if exists "auth_all_delete" on public.presupuestos;
+create policy "auth_all_select" on public.presupuestos for select to authenticated using (true);
+create policy "auth_all_insert" on public.presupuestos for insert to authenticated with check (true);
+create policy "auth_all_update" on public.presupuestos for update to authenticated using (true) with check (true);
+create policy "auth_all_delete" on public.presupuestos for delete to authenticated using (true);
+
+
 -- =====================================================================
 -- FIN. Después de correr esto:
 --   1. Verificá: select nombre, porcentaje, telefono from profiles;

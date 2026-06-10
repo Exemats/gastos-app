@@ -17,22 +17,41 @@ instalable en el celular.
   A principio de mes se mira cuánto dio el mes anterior, se transfiere la
   diferencia y se **tacha** ese mes (sin cargar ningún movimiento de
   transferencia). Lo que se debe = la suma de los meses sin tachar.
+- **División según las reglas de la casa**: los gastos del depto se dividen
+  por porcentaje (65/35); los **servicios (luz, gas, internet, agua, ABL) se
+  dividen mitad y mitad**; las **expensas las paga Seba** y al cargarlas se
+  anota la mitad como deuda con Seba (junto a las demás deudas con él), sin
+  tocar el saldo entre ustedes. Las reglas viven en el catálogo
+  `gastos_fijos` (`prop_pagador`, `paga_tercero`) y se pueden cambiar ahí.
 - **Dashboard (`/`)**: saldo pendiente grande ("Le debés a Vicky $X" /
-  "Vicky te debe $X") con el detalle mes por mes y el botón de tachar;
-  gastado del mes, cuotas del mes, tus personales del mes y últimos
-  movimientos.
+  "Vicky te debe $X") con el detalle mes por mes y el botón de tachar (con
+  recordatorio destacado los primeros días del mes); **fijos que faltan
+  cargar este mes** (un tap y se cargan); gastado del mes con aviso si
+  alguna categoría pasó su límite; cuotas del mes, tus personales del mes y
+  últimos movimientos.
 - **Resumen (`/resumen`)**: mes por mes, quién pagó cuánto de lo compartido,
   la parte que le tocaba a cada uno y el neto del mes; el estado del cierre
-  (saldado ✓ / a transferir / en curso, con deshacer); gastos por categoría;
-  deudas activas por persona (cuota mensual y lo que falta); y la lista
-  completa de movimientos del mes con filtros y borrar (reemplaza al viejo
-  Historial — la URL `/historial` redirige acá).
+  (saldado ✓ / a transferir / en curso, con deshacer); evolución de los
+  últimos 6 meses apilada por persona, comparativa con el mes anterior y
+  acumulado del año; gastos por categoría con **límites mensuales
+  opcionales** (lápiz para definirlos; la barra pasa a ámbar al 80% y a rojo
+  al pasarse); deudas activas por persona; botón **"copiar resumen del
+  mes"** listo para pegar en el chat; y la lista completa de movimientos
+  con búsqueda, filtros, **export CSV** y **corrección manual** (lápiz:
+  monto, fecha, categoría, quién pagó y cómo se divide). En el celular la
+  lista va en desplegables por categoría; en pantalla grande es una tabla y
+  el resumen queda a la izquierda con gráficos a la derecha. La URL
+  `/historial` redirige acá.
 - **Personal (`/personal`)** 🔒: gastos personales de cada uno. No se dividen,
   no tocan el saldo y **el otro no los ve** — lo garantiza Row Level Security
   en la base, no solo la pantalla.
-- **Cargar (`/nuevo`)**: toggle Compartido / Personal, monto + descripción +
-  quién pagó, categorías y catálogo de fijos con un tap, checkbox "100% de
-  quien lo pagó".
+- **Cargar (`/nuevo`)** — una sola pantalla: monto + descripción con
+  autocompletado, **frecuentes a un tap** (lo que más repiten, con el último
+  monto), quién pagó, categorías, chips Hoy/Ayer para la fecha y catálogo de
+  fijos (cada fijo aplica su regla de división sola; Expensas muestra "lo
+  paga Seba" y anota la deuda). El checkbox **"100% propio, sin dividir 🔒"**
+  manda el gasto directo a tu sección Personal.
+- **Modo oscuro automático**: sigue la configuración del celu/compu.
 - **Deudas (`/deudas`)**: cuotas con progreso, "Pagué una cuota" con deshacer,
   deudas a terceros o entre ustedes.
 - **Carga sin abrir la app**: bot de WhatsApp ("12500 súper" y listo),
@@ -53,9 +72,12 @@ Abrí http://localhost:3000 → te redirige a `/login`. Necesitás `.env.local`
 
 1. **Correr `docs/migracion_v2.sql`** en Supabase > SQL Editor (idempotente).
    Agrega `es_personal`, `profiles.telefono`, la tabla `meses_saldados` (el
-   tachado), las policies de privacidad y el trigger que solo deja existir a
-   sus dos cuentas (perfil automático incluido). **Sin este paso la app avisa
-   con un cartel y funciona en modo básico** (sin personales ni tachado).
+   tachado), las reglas de división de los fijos (servicios mitad y mitad,
+   Expensas → deuda con Seba), la tabla `presupuestos` (límites por
+   categoría), las policies de privacidad y el trigger que solo deja existir
+   a sus dos cuentas (perfil automático incluido). **Sin este paso la app
+   avisa con un cartel y funciona en modo básico** (sin personales, tachado
+   ni límites).
 2. **Habilitar Google** como provider (sección siguiente).
 3. **Deployar** con las env vars nuevas (`.env.example`).
 
@@ -197,6 +219,12 @@ soporta share target de PWAs; usá el atajo.
 - **Degradación con gracia**: si la migración v2 no se corrió, la app avisa
   con un cartel y lo básico (cargar y dividir gastos compartidos) sigue
   funcionando.
+- **Reglas de división en el catálogo, no en el código**: `gastos_fijos`
+  define cómo se divide cada servicio (`prop_pagador = 0.5`) y cuáles paga
+  un tercero (`paga_tercero = 'Seba'` → se anota como deuda por
+  `prop_tercero` del total). Cambiar una regla es un UPDATE, sin deploy.
+- **Gráficos sin librerías**: la evolución y las barras por categoría son
+  CSS puro — cero dependencias nuevas.
 - Formato de plata `es-AR` sin decimales en pantalla; los centavos viven en
   la DB. Fechas de ingesta externa en hora argentina.
 

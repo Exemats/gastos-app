@@ -32,6 +32,7 @@ export type Deuda = {
   cuotas_restantes: number
   fecha_primera_cuota: string | null
   activa: boolean
+  created_at?: string
 }
 
 export type GastoFijo = {
@@ -40,6 +41,13 @@ export type GastoFijo = {
   monto_estimado: number | null
   dia_vencimiento: number | null
   activo: boolean
+  /** Cómo se divide: 0.5 = mitad y mitad; null = porcentaje del perfil. */
+  prop_pagador?: number | null
+  /** Si lo paga un tercero (ej: 'Seba'): al cargarlo no se crea un movimiento
+   * sino una deuda con ese tercero por la parte de quien carga. */
+  paga_tercero?: string | null
+  /** Parte que se le debe al tercero (null = la mitad). */
+  prop_tercero?: number | null
 }
 
 /** Mes 'tachado': la división de ese mes ya se transfirió. */
@@ -48,6 +56,12 @@ export type MesSaldado = {
   monto: number | null
   saldado_por: string | null
   created_at: string
+}
+
+/** Límite mensual (opcional) por categoría de lo compartido. */
+export type Presupuesto = {
+  categoria: string
+  monto: number
 }
 
 export const CATEGORIAS = [
