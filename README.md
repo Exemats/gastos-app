@@ -1,108 +1,211 @@
 # Gastos · Mati & Vicky — "La libreta"
 
-App de gastos compartidos del depto: carga rápida de gastos, deudas en cuotas
-y saldo neto entre los dos calculado solo. Next.js 15 (App Router) + Supabase
-+ Tailwind 4. PWA instalable en el celular.
+App de gastos compartidos del depto: carga rápida, deudas en cuotas, saldo
+neto entre los dos calculado solo, resumen por persona y sección privada de
+gastos personales. Next.js 15 (App Router) + Supabase + Tailwind 4. PWA
+instalable en el celular.
 
-## Qué incluye (todas las fases del plan, menos la 7)
+## Qué incluye
 
-- **Auth por magic link** (Supabase): middleware que protege todo, login, callback, logout.
-- **Dashboard (`/`)**: saldo neto grande ("Le debés a Vicky $X" / "Vicky te debe $X"),
-  gastado del mes, cuotas del mes, últimos movimientos.
-- **Cargar gasto (`/nuevo`)**: monto + descripción + quién pagó, categorías como
-  botones, catálogo de gastos fijos (luz, gas, etc.) con un tap, checkbox
-  "100% de quien lo pagó" (usa `prop_pagador = 1`).
-- **Deudas (`/deudas`)**: cuotas con barra de progreso, "Pagué una cuota"
-  (auto-cierra al llegar al total), alta de deuda a terceros o entre ustedes.
-- **Historial (`/historial`)**: filtros por mes / tipo / persona, total filtrado, borrar.
-- **Saldar saldo**: botón en el dashboard que registra un "Pago de saldo"
-  (`prop_pagador = 0`, categoría `ajuste`) y deja el balance en cero. No requiere
-  cambios de esquema.
-- **Setup de perfil sin SQL**: la primera vez que cada uno entra, elige
-  "Soy Mati (65%)" o "Soy Vicky (35%)" y el perfil se corrige solo.
-- **PWA**: manifest + service worker + íconos → instalable desde el navegador del celu.
+- **Login con Google** (un tap, sin contraseñas) restringido a las cuentas de
+  Mati y Vicky. La sesión queda guardada en el celu y se renueva sola: se
+  loguean una vez cada tanto, no cada vez. Queda el magic link por mail como
+  plan B.
+- **Perfil automático**: al entrar por primera vez con tu mail, el perfil se
+  crea ya como Mati (65%) o Vicky (35%). Sin pantallas de setup.
+- **Dashboard (`/`)**: saldo neto grande ("Le debés a Vicky $X" / "Vicky te
+  debe $X"), gastado del mes, cuotas del mes, tus personales del mes, últimos
+  movimientos y botón de saldar.
+- **Resumen (`/resumen`)**: mes por mes, quién pagó cuánto de lo compartido,
+  la parte que le tocaba a cada uno y el neto del mes; gastos por categoría;
+  deudas activas por persona (cuota mensual y lo que falta); y la lista
+  completa de movimientos del mes con filtros y borrar (reemplaza al viejo
+  Historial — la URL `/historial` redirige acá).
+- **Personal (`/personal`)** 🔒: gastos personales de cada uno. No se dividen,
+  no tocan el saldo y **el otro no los ve** — lo garantiza Row Level Security
+  en la base, no solo la pantalla.
+- **Cargar (`/nuevo`)**: toggle Compartido / Personal, monto + descripción +
+  quién pagó, categorías y catálogo de fijos con un tap, checkbox "100% de
+  quien lo pagó".
+- **Deudas (`/deudas`)**: cuotas con progreso, "Pagué una cuota" con deshacer,
+  deudas a terceros o entre ustedes.
+- **Carga sin abrir la app**: bot de WhatsApp ("12500 súper" y listo),
+  Google Forms, atajos del celu y compartir texto a la app (Android). Ver
+  abajo.
 
-## Cómo correrla local (Windows)
+## Cómo correrla local
 
-```powershell
-cd gastos-app
+```bash
 npm install
 npm run dev
 ```
 
-Abrí http://localhost:3000 → te redirige a `/login`.
+Abrí http://localhost:3000 → te redirige a `/login`. Necesitás `.env.local`
+(copiá `.env.example` y completá).
 
-El `.env.local` **ya viene incluido** en el zip, generado en UTF-8 sin BOM con
-fin de línea LF — esto resuelve el problema de encoding que tenías con el
-archivo creado desde VS Code en Windows. No lo edites con Notepad; si alguna
-vez necesitás recrearlo, usá el comando de PowerShell del plan o copiá
-`.env.example`.
+## Puesta al día (si venís de la versión anterior)
 
-## Base de datos
+1. **Correr `docs/migracion_v2.sql`** en Supabase > SQL Editor (idempotente).
+   Agrega `es_personal`, `profiles.telefono`, las policies de privacidad y el
+   trigger que solo deja existir a sus dos cuentas (perfil automático incluido).
+2. **Habilitar Google** como provider (sección siguiente).
+3. **Deployar** con las env vars nuevas (`.env.example`).
 
-El esquema es **el mismo que ya corriste en Supabase** (`docs/supabase_schema.sql`,
-incluido como referencia). No hay que correr nada de nuevo: la app usa
-`profiles`, `movimientos`, `deudas` y `gastos_fijos` tal como están.
-El balance se calcula en la app con la misma lógica que `balance_view`, pero
-sin depender de los nombres hardcodeados 'Mati'/'Vicky' (más robusto).
+El esquema original sigue en `docs/supabase_schema.sql` como referencia.
 
-## Configuración de Supabase Auth (una vez)
+## Login con Google (una vez)
 
-1. Authentication → URL Configuration:
-   - Site URL: `http://localhost:3000` (en dev) o tu URL de Vercel (en prod).
-   - Redirect URLs: `http://localhost:3000/**` y `https://TU-APP.vercel.app/**`.
-2. **Importante (seguridad):** cuando los dos ya se hayan logueado al menos una
-   vez, andá a Authentication → Sign In / Up y **desactivá "Allow new users to
-   sign up"**. Las policies actuales dejan leer/escribir a cualquier usuario
-   autenticado, así que conviene cerrar el registro a terceros.
+1. En [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+   creá un proyecto (si no tenés) → **Credentials → Create credentials →
+   OAuth client ID → Web application**.
+   - Authorized redirect URI: `https://TU-PROYECTO.supabase.co/auth/v1/callback`
+     (la URL exacta te la muestra Supabase en el paso 2).
+   - Si pide configurar la pantalla de consentimiento: tipo External, agregá
+     los dos mails como test users o publicala (es solo para ustedes dos).
+2. En Supabase → **Authentication → Sign In / Providers → Google**: activalo y
+   pegá el Client ID y el Client Secret.
+3. En **Authentication → URL Configuration**: Site URL = tu URL de Vercel, y
+   en Redirect URLs agregá `https://TU-APP.vercel.app/**` (y
+   `http://localhost:3000/**` para dev).
+
+**¿Quién puede entrar?** Solo `matiarona@gmail.com` y `vickyswag02@gmail.com`.
+Está bloqueado en tres capas: el trigger de la base rechaza el alta de
+cualquier otro mail, y el callback y el middleware cierran la sesión de
+cualquier cuenta que no sea una de esas dos (la lista vive en `lib/auth.ts`).
+
+**¿Cada cuánto pide login?** Casi nunca: la sesión se refresca sola en cada
+visita. Para que sea así, en Supabase → Authentication → Sessions dejá
+*time-box* e *inactivity timeout* desactivados (es el default). Si instalan
+la PWA, queda como una app con sesión persistente.
+
+## Cargar gastos sin abrir la app
+
+Todas las vías terminan en el mismo lugar y entienden el mismo texto libre:
+
+> `12500 súper` · `luz 45000` (lo marca como fijo) · `personal 8000 gym` ·
+> `vicky 9000 farmacia` (lo pagó Vicky) · `1.234,56 ferretería`
+
+### Bot de WhatsApp (recomendado)
+
+Le escribís al número del bot y te contesta "Anotado ✓ …". Setup (una vez,
+~20 min):
+
+1. En [Meta for Developers](https://developers.facebook.com/): **Create App →
+   Business** → agregá el producto **WhatsApp**. Te da un número de prueba y
+   un token; para uso permanente generá un **token de sistema** (Business
+   Settings → System users) y registrá un número propio si quieren.
+2. En Vercel cargá `WHATSAPP_VERIFY_TOKEN` (lo inventás), `WHATSAPP_TOKEN`,
+   `WHATSAPP_PHONE_ID` (está en WhatsApp → API Setup) y `WHATSAPP_APP_SECRET`
+   (App Settings → Basic). Redeploy.
+3. En WhatsApp → **Configuration → Webhook**: Callback URL
+   `https://TU-APP.vercel.app/api/whatsapp`, Verify token el mismo que
+   inventaste → Verify and save → suscribite al campo **messages**.
+4. Cargá sus números en la base (el bot te dice tu número exacto si le
+   escribís antes de este paso):
+   ```sql
+   update profiles set telefono = '549...' where nombre = 'Mati';
+   update profiles set telefono = '549...' where nombre = 'Vicky';
+   ```
+5. Agenden el número del bot y listo: `12500 súper` → "Anotado ✓".
+
+> Nota: en el número de prueba de Meta hay que registrar los teléfonos de
+> ambos como destinatarios permitidos (API Setup → To). Con un número propio
+> no hace falta.
+
+### Google Forms (cero infraestructura)
+
+1. Creá un Form con estos campos (títulos exactos): **Monto** (respuesta
+   corta), **Descripción** (corta), **Quién pagó** (opción múltiple:
+   Mati / Vicky), **Categoría** (opción múltiple, opcional: súper, salidas,
+   transporte, delivery, regalos, servicios, hogar, otros), **¿Personal?**
+   (opción múltiple: No / Sí).
+2. En el Form: ⋮ → **Apps Script**, pegá esto (con tu URL y tu token):
+
+   ```js
+   const URL = 'https://TU-APP.vercel.app/api/ingesta'
+   const TOKEN = 'el-mismo-INGESTA_TOKEN-de-vercel'
+
+   function alEnviar(e) {
+     const r = {}
+     e.response.getItemResponses().forEach(ir => r[ir.getItem().getTitle()] = ir.getResponse())
+     UrlFetchApp.fetch(URL, {
+       method: 'post',
+       contentType: 'application/json',
+       payload: JSON.stringify({
+         token: TOKEN,
+         monto: r['Monto'],
+         descripcion: r['Descripción'],
+         quien: r['Quién pagó'],
+         categoria: r['Categoría'] || null,
+         personal: r['¿Personal?'] === 'Sí',
+       }),
+     })
+   }
+   ```
+3. En Apps Script: ⏰ Triggers → Add trigger → función `alEnviar`, evento
+   **On form submit**. Autorizá y listo.
+4. Guardá el form como acceso directo en la pantalla de inicio del celu.
+
+### Atajo del celu (iPhone/Android)
+
+Un atajo que pregunta "¿Qué gastaste?" y hace POST a
+`https://TU-APP.vercel.app/api/ingesta` con JSON
+`{"token":"...","texto":"lo que escribiste","quien":"Mati"}` (en iOS:
+Atajos → + → Pedir entrada → Obtener contenido de URL, método POST). Queda a
+un tap o por Siri.
+
+### Compartir a la app (Android)
+
+Con la PWA instalada, desde cualquier app: Compartir → **Gastos** → se abre
+la carga con el texto ya parseado (monto, categoría, etc.). En iOS Apple no
+soporta share target de PWAs; usá el atajo.
 
 ## Deploy en Vercel
 
-1. Subí el código al repo (`github.com/Exemats/gastos-app`):
-   ```powershell
-   git add -A
-   git commit -m "App completa: dashboard, carga, deudas, historial, PWA"
-   git push
-   ```
-2. En Vercel → Project → Settings → Environment Variables, cargá
-   `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY` (los mismos
-   valores del `.env.local`).
-3. Redeploy. Agregá la URL de Vercel a los Redirect URLs de Supabase.
+1. Push al repo y conectalo a Vercel.
+2. Environment Variables: las de `.env.example` (mínimo las dos de Supabase;
+   `SUPABASE_SERVICE_ROLE_KEY` + `INGESTA_TOKEN` para Forms/atajos; las
+   `WHATSAPP_*` si usan el bot).
+3. Redeploy y agregá la URL a los Redirect URLs de Supabase.
 
-## Instalar como app en el celular
+## Decisiones de diseño (para que las revises)
 
-Abrí la URL de Vercel en el navegador del celu → menú → "Agregar a pantalla de
-inicio" / "Instalar app". Queda con ícono propio y pantalla completa.
-
-## Decisiones tomadas (para que las revises)
-
-- **Balance calculado en la app**, no vía `balance_view`, para no depender de
-  que los nombres en `profiles` sean exactamente 'Mati'/'Vicky'. La view sigue
-  existiendo y sirve para chequear desde el SQL Editor.
-- **Pago de saldo** = movimiento con `prop_pagador = 0` y categoría `ajuste`.
-  Se excluye de los totales de "gastado del mes" para no inflarlos.
-- Las **deudas a terceros no entran al saldo neto** entre ustedes (como estaba
-  decidido); se trackean cuota a cuota en `/deudas`.
-- "Pagué una cuota" tiene **Deshacer** (resta una cuota y reactiva) por si se
-  toca de más.
-- Formato de plata: `es-AR`, sin decimales en pantalla (los centavos viven en la DB).
-- Fase 7 (ingreso por email/lenguaje natural) queda afuera, como estaba
-  planificado; el modelo de datos ya la soporta.
+- **Personales con `prop_pagador = 1` forzado por un check** en la base:
+  aunque una query se olvide de filtrarlos, no pueden mover el saldo.
+- **Privacidad por RLS, no por UI**: las policies de `movimientos` esconden
+  los personales del otro a nivel base de datos.
+- **Allowlist en tres capas** (trigger + callback + middleware): el registro
+  puede quedar "abierto" en Supabase que igual nadie más entra.
+- **Historial fusionado en Resumen**: misma lista con filtros y borrar, pero
+  con el contexto del mes (por persona, categorías, deudas) arriba.
+- **`/api/*` autenticadas por token propio** (no por sesión): el middleware
+  las excluye y cada una valida lo suyo (`INGESTA_TOKEN`, firma de Meta).
+- **Pago de saldo** = movimiento con `prop_pagador = 0` y categoría `ajuste`,
+  excluido de los totales de consumo. Deudas a terceros no entran al saldo.
+- Formato de plata `es-AR` sin decimales en pantalla; los centavos viven en
+  la DB. Fechas de ingesta externa en hora argentina.
 
 ## Estructura
 
 ```
 app/
-  page.tsx            dashboard
-  nuevo/page.tsx      carga rápida
+  page.tsx            dashboard (saldo, mes, personal, últimos)
+  resumen/page.tsx    resumen mensual por persona + categorías + deudas + lista
+  personal/page.tsx   sección privada de gastos personales
+  nuevo/page.tsx      carga (compartido/personal, share target)
   deudas/page.tsx     cuotas
-  historial/page.tsx  historial filtrable
-  login/page.tsx      magic link
-  auth/callback/      intercambio de código por sesión
+  historial/page.tsx  redirect a /resumen
+  login/page.tsx      Google + magic link
+  auth/callback/      canje de código, allowlist y perfil automático
+  api/ingesta/        POST con token: Forms, atajos, etc.
+  api/whatsapp/       webhook Meta Cloud API (texto libre + confirmación)
 components/           Nav, LogoutButton, PerfilSetup, SaldarButton, SwRegister
-lib/supabase/         clientes browser/server (@supabase/ssr)
-lib/format.ts         plata, fechas y cálculo de balance
-middleware.ts         protección de rutas + refresh de sesión
-public/               manifest, sw.js, íconos PWA
-docs/                 supabase_schema.sql (referencia)
+lib/
+  auth.ts             cuentas habilitadas (allowlist + perfil por mail)
+  parsear-gasto.ts    parser de texto libre ("12500 súper")
+  ingesta.ts          registro de gastos desde afuera (resuelve quién pagó)
+  supabase/           clientes browser/server/admin
+  format.ts           plata, fechas, balance
+middleware.ts         protección de rutas + allowlist + refresh de sesión
+docs/                 supabase_schema.sql (v1) + migracion_v2.sql
 ```

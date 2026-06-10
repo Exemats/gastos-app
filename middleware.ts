@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { emailHabilitado } from '@/lib/auth'
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request })
@@ -33,6 +34,18 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname
   const isPublic = path.startsWith('/login') || path.startsWith('/auth')
 
+  // Sesión de una cuenta no habilitada: se cierra y afuera.
+  if (user && !emailHabilitado(user.email)) {
+    await supabase.auth.signOut()
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    url.search = 'error=denegado'
+    const redir = NextResponse.redirect(url)
+    // conservar las cookies que borró/refrescó el signOut
+    response.cookies.getAll().forEach((cookie) => redir.cookies.set(cookie))
+    return redir
+  }
+
   if (!user && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
@@ -50,6 +63,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // /api queda afuera: esas rutas se autentican con token propio
+    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|icons/|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

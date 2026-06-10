@@ -1,19 +1,24 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { CATEGORIAS, type GastoFijo, type Profile } from '@/lib/types'
 import { hoyISO } from '@/lib/format'
+import { parsearGasto, parsearMonto } from '@/lib/parsear-gasto'
 import Nav from '@/components/Nav'
 
-export default function NuevoGasto() {
+function NuevoGastoForm() {
   const router = useRouter()
+  const params = useSearchParams()
   const supabase = createClient()
 
   const [perfiles, setPerfiles] = useState<Profile[]>([])
   const [fijos, setFijos] = useState<GastoFijo[]>([])
   const [userId, setUserId] = useState<string | null>(null)
 
+  const [ambito, setAmbito] = useState<'compartido' | 'personal'>(
+    params.get('ambito') === 'personal' ? 'personal' : 'compartido'
+  )
   const [tipo, setTipo] = useState<'gasto_depto' | 'gasto_fijo'>('gasto_depto')
   const [monto, setMonto] = useState('')
   const [descripcion, setDescripcion] = useState('')
@@ -34,10 +39,30 @@ export default function NuevoGasto() {
         supabase.from('gastos_fijos').select('*').eq('activo', true).order('nombre'),
       ])
       const uid = u.user?.id ?? null
+      const perfilesOk = (p ?? []).map((x) => ({ ...x, porcentaje: Number(x.porcentaje) }))
       setUserId(uid)
-      setPerfiles((p ?? []).map((x) => ({ ...x, porcentaje: Number(x.porcentaje) })))
+      setPerfiles(perfilesOk)
       setFijos((f ?? []) as GastoFijo[])
       if (uid) setPagadoPor(uid)
+
+      // Texto compartido a la app (share target / atajo): se parsea y precarga
+      const texto = params.get('texto') || params.get('titulo')
+      if (texto) {
+        const r = parsearGasto(texto, perfilesOk.map((x) => x.nombre))
+        if (r.ok) {
+          setMonto(String(r.gasto.monto))
+          setDescripcion(r.gasto.descripcion)
+          setCategoria(r.gasto.categoria)
+          if (r.gasto.esPersonal) setAmbito('personal')
+          if (r.gasto.tipo === 'gasto_fijo') setTipo('gasto_fijo')
+          const nombrado = r.gasto.pagadorNombre
+            ? perfilesOk.find((x) => x.nombre === r.gasto.pagadorNombre)
+            : null
+          if (nombrado) setPagadoPor(nombrado.id)
+        } else {
+          setDescripcion(texto)
+        }
+      }
     }
     cargar()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -49,10 +74,13 @@ export default function NuevoGasto() {
     setCategoria('servicios')
   }
 
+  const esPersonal = ambito === 'personal'
+
   async function guardar(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    const montoNum = Number(monto.replace(',', '.'))
+    // entiende formato argentino: "12.500" = 12500, "12500,50" = 12500.5
+    const montoNum = parsearMonto(monto.trim())
     if (!montoNum || montoNum <= 0) {
       setError('Poné un monto mayor a cero.')
       return
@@ -63,13 +91,14 @@ export default function NuevoGasto() {
     }
     setGuardando(true)
     const { error } = await supabase.from('movimientos').insert({
-      tipo,
+      tipo: esPersonal ? 'gasto_depto' : tipo,
       fecha,
       descripcion: descripcion.trim(),
       monto: montoNum,
-      pagado_por: pagadoPor || userId,
+      pagado_por: esPersonal ? userId : pagadoPor || userId,
       categoria,
-      prop_pagador: soloMio ? 1 : null,
+      prop_pagador: esPersonal || soloMio ? 1 : null,
+      es_personal: esPersonal,
     })
     setGuardando(false)
     if (error) {
@@ -77,34 +106,59 @@ export default function NuevoGasto() {
       return
     }
     setOk(true)
-    setTimeout(() => router.push('/'), 650)
+    setTimeout(() => router.push(esPersonal ? '/personal' : '/'), 650)
   }
 
   return (
     <main className="mx-auto max-w-md px-4 pb-28 pt-6">
       <h1 className="mb-4 text-2xl">Cargar un gasto</h1>
 
-      {/* Tipo */}
-      <div className="mb-4 grid grid-cols-2 gap-2">
+      {/* Ámbito: compartido vs personal */}
+      <div className="mb-3 grid grid-cols-2 gap-2">
         <button
           type="button"
           className="chip text-center"
-          data-activo={tipo === 'gasto_depto'}
-          onClick={() => setTipo('gasto_depto')}
+          data-activo={!esPersonal}
+          onClick={() => setAmbito('compartido')}
         >
-          Gasto del depto
+          Compartido
         </button>
         <button
           type="button"
           className="chip text-center"
-          data-activo={tipo === 'gasto_fijo'}
-          onClick={() => setTipo('gasto_fijo')}
+          data-activo={esPersonal}
+          onClick={() => setAmbito('personal')}
         >
-          Servicio / fijo
+          Personal 🔒
         </button>
       </div>
 
-      {tipo === 'gasto_fijo' && fijos.length > 0 && (
+      {esPersonal ? (
+        <p className="mb-4 text-sm text-tinta-suave">
+          No se divide, no toca el saldo y solo vos lo ves.
+        </p>
+      ) : (
+        <div className="mb-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            className="chip text-center"
+            data-activo={tipo === 'gasto_depto'}
+            onClick={() => setTipo('gasto_depto')}
+          >
+            Gasto del depto
+          </button>
+          <button
+            type="button"
+            className="chip text-center"
+            data-activo={tipo === 'gasto_fijo'}
+            onClick={() => setTipo('gasto_fijo')}
+          >
+            Servicio / fijo
+          </button>
+        </div>
+      )}
+
+      {!esPersonal && tipo === 'gasto_fijo' && fijos.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-2">
           {fijos.map((f) => (
             <button
@@ -148,31 +202,39 @@ export default function NuevoGasto() {
           <input
             id="desc"
             className="input"
-            placeholder={tipo === 'gasto_fijo' ? 'Luz, gas, internet…' : 'Súper, salida, farmacia…'}
+            placeholder={
+              esPersonal
+                ? 'Gym, ropa, regalo para mamá…'
+                : tipo === 'gasto_fijo'
+                  ? 'Luz, gas, internet…'
+                  : 'Súper, salida, farmacia…'
+            }
             value={descripcion}
             onChange={(e) => setDescripcion(e.target.value)}
           />
         </div>
 
-        <div>
-          <p className="mb-1 text-sm font-medium">¿Quién lo pagó?</p>
-          <div className="grid grid-cols-2 gap-2">
-            {perfiles.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className="chip text-center"
-                data-activo={pagadoPor === p.id}
-                onClick={() => setPagadoPor(p.id)}
-              >
-                {p.nombre}
-                {p.id === userId ? ' (vos)' : ''}
-              </button>
-            ))}
+        {!esPersonal && (
+          <div>
+            <p className="mb-1 text-sm font-medium">¿Quién lo pagó?</p>
+            <div className="grid grid-cols-2 gap-2">
+              {perfiles.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="chip text-center"
+                  data-activo={pagadoPor === p.id}
+                  onClick={() => setPagadoPor(p.id)}
+                >
+                  {p.nombre}
+                  {p.id === userId ? ' (vos)' : ''}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {tipo === 'gasto_depto' && (
+        {(esPersonal || tipo === 'gasto_depto') && (
           <div>
             <p className="mb-1 text-sm font-medium">Categoría (opcional)</p>
             <div className="flex flex-wrap gap-2">
@@ -204,17 +266,20 @@ export default function NuevoGasto() {
           />
         </div>
 
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={soloMio}
-            onChange={(e) => setSoloMio(e.target.checked)}
-          />
-          <span>
-            Es 100% de quien lo pagó <span className="text-tinta-suave">(no se divide, no genera deuda)</span>
-          </span>
-        </label>
+        {!esPersonal && (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={soloMio}
+              onChange={(e) => setSoloMio(e.target.checked)}
+            />
+            <span>
+              Es 100% de quien lo pagó{' '}
+              <span className="text-tinta-suave">(no se divide, no genera deuda)</span>
+            </span>
+          </label>
+        )}
 
         <button className="btn btn-primario" disabled={guardando || ok}>
           {ok ? 'Anotado ✓' : guardando ? 'Anotando…' : 'Anotar en la libreta'}
@@ -223,5 +288,13 @@ export default function NuevoGasto() {
       </form>
       <Nav />
     </main>
+  )
+}
+
+export default function NuevoGasto() {
+  return (
+    <Suspense>
+      <NuevoGastoForm />
+    </Suspense>
   )
 }

@@ -10,5 +10,22 @@
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "/nuevo",
+    "method": "GET",
+    "params": { "title": "titulo", "text": "texto", "url": "url" }
+  },
+  "shortcuts": [
+    {
+      "name": "Cargar un gasto",
+      "url": "/nuevo",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Cargar gasto personal",
+      "url": "/nuevo?ambito=personal",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
   ]
 }

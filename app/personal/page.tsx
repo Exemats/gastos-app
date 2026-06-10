@@ -1,0 +1,164 @@
+'use client'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
+import { plata, nombreMes, fechaCorta, hoyISO, mesShift } from '@/lib/format'
+import type { Movimiento } from '@/lib/types'
+import Nav from '@/components/Nav'
+
+/**
+ * Sección privada: tus gastos personales. No se dividen, no tocan el
+ * saldo y la otra persona no los ve (lo garantiza RLS en la base,
+ * no solo esta pantalla).
+ */
+export default function PersonalPage() {
+  const supabase = createClient()
+  const [movs, setMovs] = useState<Movimiento[]>([])
+  const [cargando, setCargando] = useState(true)
+  const [mes, setMes] = useState(hoyISO().slice(0, 7))
+  const [borrando, setBorrando] = useState<string | null>(null)
+
+  const cargar = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const { data } = await supabase
+      .from('movimientos')
+      .select('*')
+      .eq('es_personal', true)
+      .order('fecha', { ascending: false })
+      .order('created_at', { ascending: false })
+    // RLS ya filtra a los tuyos; el filter de abajo es cinturón y tiradores
+    setMovs(((data ?? []) as Movimiento[]).filter((m) => m.pagado_por === user?.id))
+    setCargando(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    cargar()
+  }, [cargar])
+
+  const movsMes = useMemo(() => movs.filter((m) => m.fecha.startsWith(mes)), [movs, mes])
+  const total = movsMes.reduce((a, m) => a + Number(m.monto), 0)
+
+  const porCategoria = useMemo(() => {
+    const acc = new Map<string, number>()
+    for (const m of movsMes) {
+      acc.set(m.categoria ?? 'sin categoría', (acc.get(m.categoria ?? 'sin categoría') ?? 0) + Number(m.monto))
+    }
+    return [...acc.entries()].sort((a, b) => b[1] - a[1])
+  }, [movsMes])
+
+  async function borrar(id: string) {
+    const { error } = await supabase.from('movimientos').delete().eq('id', id)
+    setBorrando(null)
+    if (!error) cargar()
+  }
+
+  const esMesActual = mes === hoyISO().slice(0, 7)
+
+  return (
+    <main className="mx-auto max-w-md px-4 pb-28 pt-6">
+      <h1 className="text-2xl">Lo tuyo 🔒</h1>
+      <p className="mb-4 mt-1 text-sm text-tinta-suave">
+        Gastos personales: no se dividen, no tocan el saldo y solo vos los ves.
+      </p>
+
+      {/* Navegación de mes */}
+      <div className="card mb-4 flex items-center justify-between px-2 py-2">
+        <button
+          className="rounded-lg px-3 py-1 text-xl text-birome"
+          aria-label="Mes anterior"
+          onClick={() => setMes(mesShift(mes, -1))}
+        >
+          ‹
+        </button>
+        <p className="font-semibold capitalize">{nombreMes(mes)}</p>
+        <button
+          className={`rounded-lg px-3 py-1 text-xl ${esMesActual ? 'text-linea' : 'text-birome'}`}
+          aria-label="Mes siguiente"
+          disabled={esMesActual}
+          onClick={() => setMes(mesShift(mes, 1))}
+        >
+          ›
+        </button>
+      </div>
+
+      <section className="card renglones mb-4 p-5">
+        <p className="text-sm font-medium text-tinta-suave">Gastaste este mes</p>
+        <p className="num mt-1 text-4xl font-semibold">{plata(total)}</p>
+        <p className="mt-0.5 text-sm text-tinta-suave">
+          {movsMes.length} gasto{movsMes.length === 1 ? '' : 's'}
+        </p>
+      </section>
+
+      <Link href="/nuevo?ambito=personal" className="btn btn-primario mb-4 w-full">
+        + Cargar gasto personal
+      </Link>
+
+      {porCategoria.length > 1 && (
+        <section className="card mb-4 p-4">
+          <h2 className="mb-2 text-lg">Por categoría</h2>
+          <ul className="grid gap-1.5">
+            {porCategoria.map(([cat, monto]) => (
+              <li key={cat} className="flex items-baseline justify-between text-sm">
+                <span className="capitalize">{cat}</span>
+                <span className="num font-medium">{plata(monto)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {cargando ? (
+        <p className="text-sm text-tinta-suave">Cargando…</p>
+      ) : movsMes.length === 0 ? (
+        <div className="card p-5 text-center text-sm text-tinta-suave">
+          Nada anotado este mes. Lo que cargues acá queda solo para tus ojos.
+        </div>
+      ) : (
+        <ul className="card divide-y divide-linea">
+          {movsMes.map((m) => (
+            <li key={m.id} className="flex items-center justify-between px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate font-medium">{m.descripcion}</p>
+                <p className="text-xs text-tinta-suave">
+                  {fechaCorta(m.fecha)}
+                  {m.categoria ? ` · ${m.categoria}` : ''}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <p className="num font-semibold">{plata(Number(m.monto))}</p>
+                {borrando === m.id ? (
+                  <span className="flex gap-1">
+                    <button
+                      className="rounded bg-rojo px-2 py-1 text-xs font-semibold text-white"
+                      onClick={() => borrar(m.id)}
+                    >
+                      Borrar
+                    </button>
+                    <button
+                      className="rounded border border-linea px-2 py-1 text-xs"
+                      onClick={() => setBorrando(null)}
+                    >
+                      No
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="p-1 text-tinta-suave"
+                    aria-label={`Borrar ${m.descripcion}`}
+                    onClick={() => setBorrando(m.id)}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg>
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Nav />
+    </main>
+  )
+}

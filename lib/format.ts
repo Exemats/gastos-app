@@ -40,6 +40,20 @@ export function hoyISO() {
   return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10)
 }
 
+/** Fecha de hoy en Argentina (el servidor corre en UTC). en-CA da YYYY-MM-DD. */
+export function hoyArgentina() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+  }).format(new Date())
+}
+
+/** Suma/resta meses a un 'YYYY-MM'. */
+export function mesShift(yyyyMm: string, delta: number) {
+  const [y, m] = yyyyMm.split('-').map(Number)
+  const d = new Date(y, m - 1 + delta, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
 /**
  * Balance neto entre los dos perfiles a partir de los movimientos.
  * Misma lógica que balance_view, calculada acá para mostrarla relativa

@@ -20,7 +20,7 @@ export default async function Dashboard() {
       supabase.from('profiles').select('id, nombre, porcentaje'),
       supabase
         .from('movimientos')
-        .select('monto, pagado_por, prop_pagador, fecha, tipo, descripcion, categoria, id')
+        .select('monto, pagado_por, prop_pagador, fecha, tipo, descripcion, categoria, es_personal, id')
         .order('fecha', { ascending: false }),
       supabase.from('deudas').select('*').eq('activa', true),
     ])
@@ -32,17 +32,24 @@ export default async function Dashboard() {
   const yo = perfilesOk.find((p) => p.id === user?.id)
   const otro = perfilesOk.find((p) => p.id !== user?.id)
 
+  // los personales (RLS solo trae los tuyos) quedan fuera de todo lo compartido
+  const compartidos = (movimientos ?? []).filter((m) => !m.es_personal)
+  const personales = (movimientos ?? []).filter((m) => m.es_personal)
+
   // --- saldo neto ---
-  const pusoDeMas = calcularBalance(movimientos ?? [], perfilesOk)
+  const pusoDeMas = calcularBalance(compartidos, perfilesOk)
   const miExtra = yo ? pusoDeMas.get(yo.id) ?? 0 : 0
   const suExtra = otro ? pusoDeMas.get(otro.id) ?? 0 : 0
   const balance = miExtra - suExtra // > 0: el otro me debe
 
   // --- gasto del mes ---
   const mesActual = hoyISO().slice(0, 7)
-  const movsMes = (movimientos ?? []).filter((m) => m.fecha.startsWith(mesActual))
+  const movsMes = compartidos.filter((m) => m.fecha.startsWith(mesActual))
   const gastoMes = movsMes
     .filter((m) => m.categoria !== 'ajuste')
+    .reduce((acc, m) => acc + Number(m.monto), 0)
+  const personalMes = personales
+    .filter((m) => m.fecha.startsWith(mesActual))
     .reduce((acc, m) => acc + Number(m.monto), 0)
 
   // --- cuotas del mes ---
@@ -52,7 +59,7 @@ export default async function Dashboard() {
     0
   )
 
-  const ultimos = (movimientos ?? []).slice(0, 5)
+  const ultimos = compartidos.slice(0, 5)
 
   const necesitaSetup =
     yo && (yo.nombre === 'Nuevo' || perfilesOk.length < 2 || !otro)
@@ -112,8 +119,8 @@ export default async function Dashboard() {
       </section>
 
       {/* Resumen del mes */}
-      <section className="mb-4 grid grid-cols-2 gap-3">
-        <div className="card p-4">
+      <section className="mb-3 grid grid-cols-2 gap-3">
+        <Link href="/resumen" className="card block p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-tinta-suave">
             Gastado este mes
           </p>
@@ -121,7 +128,7 @@ export default async function Dashboard() {
           <p className="mt-0.5 text-xs text-tinta-suave">
             {movsMes.length} movimiento{movsMes.length === 1 ? '' : 's'}
           </p>
-        </div>
+        </Link>
         <Link href="/deudas" className="card block p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-tinta-suave">
             Cuotas del mes
@@ -134,6 +141,15 @@ export default async function Dashboard() {
         </Link>
       </section>
 
+      {/* Lo personal tuyo */}
+      <Link
+        href="/personal"
+        className="card mb-4 flex items-center justify-between px-4 py-3"
+      >
+        <p className="text-sm font-medium text-tinta-suave">Tus gastos personales 🔒</p>
+        <p className="num font-semibold">{plata(personalMes)}</p>
+      </Link>
+
       {/* Acción principal */}
       <Link href="/nuevo" className="btn btn-primario mb-6 w-full">
         + Cargar un gasto
@@ -143,7 +159,7 @@ export default async function Dashboard() {
       <section>
         <div className="mb-2 flex items-baseline justify-between">
           <h2 className="text-lg">Últimos movimientos</h2>
-          <Link href="/historial" className="text-sm font-medium text-birome">
+          <Link href="/resumen" className="text-sm font-medium text-birome">
             Ver todo
           </Link>
         </div>
