@@ -17,8 +17,31 @@
   --rojo-suave: #f9e9e7;
   --verde: #1e7a4a;
   --verde-suave: #e6f3ec;
+  --ambar: #a3661c;
   --linea: #d9d6c8;
   --radius: 10px;
+}
+
+/* Modo oscuro automático: sigue la configuración del celu/compu. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --papel: #12151d;
+    --papel-card: #1a202c;
+    --cuadricula: rgba(124, 155, 217, 0.06);
+    --tinta: #e6e9f2;
+    --tinta-suave: #98a2b8;
+    --birome: #8aa6e0;
+    --birome-suave: #242e44;
+    --rojo: #e07a6e;
+    --rojo-suave: #3a2522;
+    --verde: #66bd8f;
+    --verde-suave: #1e3128;
+    --ambar: #d9a440;
+    --linea: #2d3547;
+  }
+  .btn-primario {
+    color: #12151d; /* texto oscuro sobre el azul claro del modo oscuro */
+  }
 }
 
 @theme inline {
@@ -32,6 +55,7 @@
   --color-rojo-suave: var(--rojo-suave);
   --color-verde: var(--verde);
   --color-verde-suave: var(--verde-suave);
+  --color-ambar: var(--ambar);
   --color-linea: var(--linea);
   --font-display: "Fraunces", Georgia, serif;
   --font-body: "Instrument Sans", system-ui, -apple-system, sans-serif;
@@ -75,7 +99,7 @@ h1, h2, h3 {
   width: 100%;
   border: 1px solid var(--linea);
   border-radius: 8px;
-  background: #fff;
+  background: var(--papel-card);
   padding: 10px 12px;
   font-size: 16px; /* evita zoom de iOS */
   color: var(--tinta);
@@ -102,13 +126,13 @@ h1, h2, h3 {
 .btn:disabled { opacity: 0.55; cursor: default; }
 .btn-primario { background: var(--birome); color: #fff; }
 .btn-primario:hover:not(:disabled) { filter: brightness(1.08); }
-.btn-secundario { background: #fff; color: var(--tinta); border-color: var(--linea); }
+.btn-secundario { background: var(--papel-card); color: var(--tinta); border-color: var(--linea); }
 .btn-secundario:hover:not(:disabled) { background: var(--birome-suave); }
 .btn-peligro { background: var(--rojo); color: #fff; }
 
 .chip {
   border: 1px solid var(--linea);
-  background: #fff;
+  background: var(--papel-card);
   border-radius: 999px;
   padding: 7px 14px;
   font-size: 14px;
@@ -120,6 +144,12 @@ h1, h2, h3 {
   background: var(--tinta);
   border-color: var(--tinta);
   color: var(--papel);
+}
+
+/* barra de navegación inferior (sigue el tema claro/oscuro) */
+.nav-bar {
+  background: color-mix(in srgb, var(--papel-card) 95%, transparent);
+  backdrop-filter: blur(8px);
 }
 
 /* renglones de libreta para el saldo */

@@ -13,8 +13,8 @@ import {
   mesShift,
   calcularBalance,
 } from '@/lib/format'
-import { sinAcentos } from '@/lib/parsear-gasto'
-import type { Deuda, MesSaldado, Movimiento, Profile } from '@/lib/types'
+import { sinAcentos, parsearMonto } from '@/lib/parsear-gasto'
+import type { Deuda, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
 import TacharMes from '@/components/TacharMes'
 import EditarMovimiento from '@/components/EditarMovimiento'
@@ -30,6 +30,8 @@ export default function ResumenPage() {
   const [perfiles, setPerfiles] = useState<Profile[]>([])
   const [saldados, setSaldados] = useState<MesSaldado[]>([])
   const [hayTachado, setHayTachado] = useState(true) // false si falta la migración
+  const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
+  const [hayPresupuestos, setHayPresupuestos] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
   const [cargando, setCargando] = useState(true)
 
@@ -39,9 +41,11 @@ export default function ResumenPage() {
   const [borrando, setBorrando] = useState<string | null>(null)
   const [editando, setEditando] = useState<string | null>(null)
   const [copiado, setCopiado] = useState(false)
+  const [editandoLimite, setEditandoLimite] = useState<string | null>(null)
+  const [limiteInput, setLimiteInput] = useState('')
 
   const cargar = useCallback(async () => {
-    const [{ data: u }, { data: m }, { data: d }, { data: p }, rSaldados] =
+    const [{ data: u }, { data: m }, { data: d }, { data: p }, rSaldados, rPres] =
       await Promise.all([
         supabase.auth.getUser(),
         supabase
@@ -52,6 +56,7 @@ export default function ResumenPage() {
         supabase.from('deudas').select('*').eq('activa', true),
         supabase.from('profiles').select('id, nombre, porcentaje'),
         supabase.from('meses_saldados').select('*'),
+        supabase.from('presupuestos').select('*'),
       ])
     setUserId(u.user?.id ?? null)
     setMovs((m ?? []) as Movimiento[])
@@ -59,6 +64,10 @@ export default function ResumenPage() {
     setPerfiles((p ?? []).map((x) => ({ ...x, porcentaje: Number(x.porcentaje) })))
     setSaldados((rSaldados.data ?? []) as MesSaldado[])
     setHayTachado(!rSaldados.error)
+    setPresupuestos(
+      ((rPres.data ?? []) as Presupuesto[]).map((x) => ({ ...x, monto: Number(x.monto) }))
+    )
+    setHayPresupuestos(!rPres.error)
     setCargando(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -151,6 +160,22 @@ export default function ResumenPage() {
     if (!error) cargar()
   }
 
+  // --- presupuestos por categoría ---
+  const limiteDe = (cat: string) =>
+    presupuestos.find((p) => p.categoria === cat)?.monto ?? null
+
+  async function guardarLimite(cat: string) {
+    const monto = parsearMonto(limiteInput.trim())
+    if (monto && monto > 0) {
+      await supabase.from('presupuestos').upsert({ categoria: cat, monto }, { onConflict: 'categoria' })
+    } else if (!limiteInput.trim()) {
+      await supabase.from('presupuestos').delete().eq('categoria', cat)
+    }
+    setEditandoLimite(null)
+    setLimiteInput('')
+    cargar()
+  }
+
   // --- evolución: últimos 6 meses, apilado por persona ---
   const evolucion = useMemo(() => {
     const meses = Array.from({ length: 6 }, (_, i) => mesShift(mes, i - 5))
@@ -172,6 +197,17 @@ export default function ResumenPage() {
     mesAnterior && mesAnterior.total > 0
       ? ((totalComp - mesAnterior.total) / mesAnterior.total) * 100
       : null
+
+  // --- acumulado del año del mes elegido ---
+  const anio = mes.slice(0, 4)
+  const anual = useMemo(() => {
+    const delAnio = movs.filter(
+      (m) => m.fecha.startsWith(anio) && !m.es_personal && m.categoria !== 'ajuste'
+    )
+    const total = delAnio.reduce((a, m) => a + Number(m.monto), 0)
+    const mesesConDatos = new Set(delAnio.map((m) => m.fecha.slice(0, 7))).size
+    return { total, promedio: mesesConDatos > 0 ? total / mesesConDatos : 0 }
+  }, [movs, anio])
 
   // --- lista filtrable + búsqueda ---
   const visibles = useMemo(() => {
@@ -603,33 +639,113 @@ export default function ResumenPage() {
                   ))}
                 </div>
               )}
+              {anual.total > 0 && (
+                <p className="mt-2 border-t border-linea pt-2 text-xs text-tinta-suave">
+                  Año {anio}: <span className="num font-medium text-tinta">{plata(anual.total)}</span>{' '}
+                  compartidos · promedio{' '}
+                  <span className="num font-medium text-tinta">{plata(anual.promedio)}</span>/mes
+                </p>
+              )}
             </section>
 
-            {/* Por categoría */}
+            {/* Por categoría (con límites opcionales) */}
             {porCategoria.length > 0 && (
               <section className="card mb-4 p-4">
                 <h2 className="mb-3 text-lg">Por categoría</h2>
                 <div className="grid gap-2.5">
-                  {porCategoria.map(([cat, total]) => (
-                    <div key={cat}>
-                      <div className="flex items-baseline justify-between text-sm">
-                        <span className="capitalize">{cat}</span>
-                        <span className="num font-medium">
-                          {plata(total)}
-                          <span className="ml-1 text-xs text-tinta-suave">
-                            ({Math.round((total / Math.max(1, totalComp)) * 100)}%)
+                  {porCategoria.map(([cat, total]) => {
+                    const limite = limiteDe(cat)
+                    const pctLimite = limite ? (total / limite) * 100 : null
+                    const colorBarra =
+                      pctLimite == null
+                        ? 'bg-birome'
+                        : pctLimite > 100
+                          ? 'bg-rojo'
+                          : pctLimite > 80
+                            ? 'bg-ambar'
+                            : 'bg-verde'
+                    return (
+                      <div key={cat}>
+                        <div className="flex items-baseline justify-between text-sm">
+                          <span className="flex items-center gap-1.5 capitalize">
+                            {cat}
+                            {hayPresupuestos && (
+                              <button
+                                type="button"
+                                className="text-xs text-tinta-suave hover:text-birome"
+                                aria-label={`Límite de ${cat}`}
+                                onClick={() => {
+                                  setEditandoLimite(editandoLimite === cat ? null : cat)
+                                  setLimiteInput(limite ? String(limite) : '')
+                                }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                              </button>
+                            )}
                           </span>
-                        </span>
+                          <span className="num font-medium">
+                            {plata(total)}
+                            <span
+                              className={`ml-1 text-xs ${
+                                pctLimite != null && pctLimite > 100
+                                  ? 'font-semibold text-rojo'
+                                  : 'text-tinta-suave'
+                              }`}
+                            >
+                              {limite
+                                ? `/ ${plata(limite)}`
+                                : `(${Math.round((total / Math.max(1, totalComp)) * 100)}%)`}
+                            </span>
+                          </span>
+                        </div>
+                        {editandoLimite === cat && (
+                          <div className="mt-1.5 flex items-center gap-1.5">
+                            <input
+                              className="input !w-32 !py-1.5 !text-sm num"
+                              inputMode="decimal"
+                              placeholder="Límite $ (vacío = sin límite)"
+                              value={limiteInput}
+                              autoFocus
+                              onChange={(e) =>
+                                setLimiteInput(e.target.value.replace(/[^\d.,]/g, ''))
+                              }
+                            />
+                            <button
+                              className="rounded bg-birome px-2 py-1.5 text-xs font-semibold text-white"
+                              onClick={() => guardarLimite(cat)}
+                            >
+                              OK
+                            </button>
+                            <button
+                              className="rounded border border-linea px-2 py-1.5 text-xs"
+                              onClick={() => setEditandoLimite(null)}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        )}
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-birome-suave">
+                          <div
+                            className={`h-full rounded-full ${colorBarra}`}
+                            style={{
+                              width: `${
+                                pctLimite != null
+                                  ? Math.max(4, Math.min(100, pctLimite))
+                                  : Math.max(4, (total / maxCategoria) * 100)
+                              }%`,
+                            }}
+                          />
+                        </div>
                       </div>
-                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-birome-suave">
-                        <div
-                          className="h-full rounded-full bg-birome"
-                          style={{ width: `${Math.max(4, (total / maxCategoria) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
+                {hayPresupuestos && (
+                  <p className="mt-3 text-xs text-tinta-suave">
+                    ✎ = límite mensual opcional. La barra avisa: verde ok, ámbar pasando el
+                    80%, rojo pasado.
+                  </p>
+                )}
               </section>
             )}
 

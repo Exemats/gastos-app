@@ -58,6 +58,12 @@ export type MesSaldado = {
   created_at: string
 }
 
+/** Límite mensual (opcional) por categoría de lo compartido. */
+export type Presupuesto = {
+  categoria: string
+  monto: number
+}
+
 export const CATEGORIAS = [
   'súper',
   'salidas',

@@ -191,6 +191,35 @@ update public.gastos_fijos set paga_tercero = 'Seba', prop_tercero = 0.5
 -- update public.movimientos set prop_pagador = 0.5
 --   where tipo = 'gasto_fijo' and prop_pagador is null;
 
+-- (Opcional) los gastos viejos marcados "100% de quien lo pagó" ahora son
+-- personales (la carga nueva los manda directo a la sección Personal):
+-- update public.movimientos set es_personal = true
+--   where prop_pagador = 1 and es_personal = false;
+
+
+-- ---------------------------------------------------------------------
+-- 7. PRESUPUESTOS POR CATEGORÍA (opcionales)
+-- Límite mensual por categoría de lo compartido. La barra del Resumen
+-- se pone en ámbar al pasar el 80% y en rojo al pasarse del límite.
+-- Se cargan desde la app (lápiz en "Por categoría") o por SQL.
+-- ---------------------------------------------------------------------
+create table if not exists public.presupuestos (
+  categoria   text primary key,
+  monto       numeric(12,2) not null check (monto > 0),
+  created_at  timestamptz not null default now()
+);
+
+alter table public.presupuestos enable row level security;
+
+drop policy if exists "auth_all_select" on public.presupuestos;
+drop policy if exists "auth_all_insert" on public.presupuestos;
+drop policy if exists "auth_all_update" on public.presupuestos;
+drop policy if exists "auth_all_delete" on public.presupuestos;
+create policy "auth_all_select" on public.presupuestos for select to authenticated using (true);
+create policy "auth_all_insert" on public.presupuestos for insert to authenticated with check (true);
+create policy "auth_all_update" on public.presupuestos for update to authenticated using (true) with check (true);
+create policy "auth_all_delete" on public.presupuestos for delete to authenticated using (true);
+
 
 -- =====================================================================
 -- FIN. Después de correr esto:

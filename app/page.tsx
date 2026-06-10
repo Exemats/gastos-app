@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { calcularBalance, plata, nombreMes, hoyArgentina } from '@/lib/format'
 import { coincideNombre } from '@/lib/parsear-gasto'
-import type { Deuda, GastoFijo, MesSaldado, Movimiento, Profile } from '@/lib/types'
+import type { Deuda, GastoFijo, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
 import LogoutButton from '@/components/LogoutButton'
 import PerfilSetup from '@/components/PerfilSetup'
@@ -22,6 +22,7 @@ export default async function Dashboard() {
     { data: deudas },
     { data: saldados, error: errorSaldados },
     { data: fijos },
+    { data: presupuestos },
   ] = await Promise.all([
     supabase.from('profiles').select('id, nombre, porcentaje'),
     // select('*'): si la migración v2 no corrió aún, es_personal no existe
@@ -32,6 +33,7 @@ export default async function Dashboard() {
     supabase.from('deudas').select('*'),
     supabase.from('meses_saldados').select('*'),
     supabase.from('gastos_fijos').select('*').eq('activo', true).order('nombre'),
+    supabase.from('presupuestos').select('*'),
   ])
 
   // si la tabla nueva no existe, la migración no se corrió: avisamos
@@ -111,6 +113,21 @@ export default async function Dashboard() {
     }
     return !movsMes.some((m) => coincideNombre(m.descripcion, f.nombre))
   })
+
+  // --- límites de categoría pasados este mes ---
+  const porCategoriaMes = new Map<string, number>()
+  for (const m of movsMes) {
+    if (m.categoria === 'ajuste') continue
+    const c = m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
+    porCategoriaMes.set(c, (porCategoriaMes.get(c) ?? 0) + Number(m.monto))
+  }
+  const limitesPasados = ((presupuestos ?? []) as Presupuesto[]).filter(
+    (p) => (porCategoriaMes.get(p.categoria) ?? 0) > Number(p.monto)
+  )
+
+  // principio de mes: el momento de cerrar el mes anterior
+  const esPrincipioDeMes = Number(hoy.slice(8, 10)) <= 7
+  const hayMesesParaCerrar = pendientes.some((p) => p.mes !== mesActual)
 
   const ultimos = compartidos.slice(0, 5)
 
@@ -206,9 +223,15 @@ export default async function Dashboard() {
                 </li>
               ))}
             </ul>
-            {pendientes.some((p) => p.mes !== mesActual) && (
-              <p className="mt-2 text-xs text-tinta-suave">
-                ¿Ya se transfirió un mes? Tachalo y deja de contar.
+            {hayMesesParaCerrar && (
+              <p
+                className={`mt-2 text-xs ${
+                  esPrincipioDeMes ? 'font-medium text-birome' : 'text-tinta-suave'
+                }`}
+              >
+                {esPrincipioDeMes
+                  ? '📌 Principio de mes: transfieran la diferencia y tachen el mes pasado.'
+                  : '¿Ya se transfirió un mes? Tachalo y deja de contar.'}
               </p>
             )}
           </>
@@ -261,6 +284,11 @@ export default async function Dashboard() {
           <p className="mt-0.5 text-xs text-tinta-suave">
             {movsMes.length} movimiento{movsMes.length === 1 ? '' : 's'}
           </p>
+          {limitesPasados.length > 0 && (
+            <p className="mt-1 text-xs font-medium text-rojo">
+              ⚠ {limitesPasados.map((p) => p.categoria).join(', ')} arriba del límite
+            </p>
+          )}
         </Link>
         <Link href="/deudas" className="card block p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-tinta-suave">

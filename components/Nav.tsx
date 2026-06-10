@@ -43,7 +43,7 @@ const TABS = [
 export default function Nav() {
   const pathname = usePathname()
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-linea bg-white/95 backdrop-blur">
+    <nav className="nav-bar fixed inset-x-0 bottom-0 z-20 border-t border-linea">
       <div className="mx-auto grid max-w-md grid-cols-5">
         {TABS.map((t) => {
           const activo = pathname === t.href
