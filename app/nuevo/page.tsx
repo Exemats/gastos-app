@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { CATEGORIAS, type GastoFijo, type Profile } from '@/lib/types'
 import { hoyISO } from '@/lib/format'
 import { parsearGasto, parsearMonto } from '@/lib/parsear-gasto'
+import { errorLegible } from '@/lib/errores'
 import Nav from '@/components/Nav'
 
 function NuevoGastoForm() {
@@ -97,12 +98,15 @@ function NuevoGastoForm() {
       monto: montoNum,
       pagado_por: esPersonal ? userId : pagadoPor || userId,
       categoria,
-      prop_pagador: esPersonal || soloMio ? 1 : null,
-      es_personal: esPersonal,
+      // es_personal va solo cuando hace falta: lo compartido funciona
+      // aunque la migración v2 todavía no se haya corrido
+      ...(esPersonal
+        ? { prop_pagador: 1, es_personal: true }
+        : { prop_pagador: soloMio ? 1 : null }),
     })
     setGuardando(false)
     if (error) {
-      setError(error.message)
+      setError(errorLegible(error.message))
       return
     }
     setOk(true)

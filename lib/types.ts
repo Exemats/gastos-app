@@ -42,6 +42,14 @@ export type GastoFijo = {
   activo: boolean
 }
 
+/** Mes 'tachado': la división de ese mes ya se transfirió. */
+export type MesSaldado = {
+  mes: string // 'YYYY-MM'
+  monto: number | null
+  saldado_por: string | null
+  created_at: string
+}
+
 export const CATEGORIAS = [
   'súper',
   'salidas',

@@ -13,11 +13,17 @@ instalable en el celular.
   plan B.
 - **Perfil automático**: al entrar por primera vez con tu mail, el perfil se
   crea ya como Mati (65%) o Vicky (35%). Sin pantallas de setup.
-- **Dashboard (`/`)**: saldo neto grande ("Le debés a Vicky $X" / "Vicky te
-  debe $X"), gastado del mes, cuotas del mes, tus personales del mes, últimos
-  movimientos y botón de saldar.
+- **Cierre mensual con "tachado"**: cada gasto cuenta en el mes de su fecha.
+  A principio de mes se mira cuánto dio el mes anterior, se transfiere la
+  diferencia y se **tacha** ese mes (sin cargar ningún movimiento de
+  transferencia). Lo que se debe = la suma de los meses sin tachar.
+- **Dashboard (`/`)**: saldo pendiente grande ("Le debés a Vicky $X" /
+  "Vicky te debe $X") con el detalle mes por mes y el botón de tachar;
+  gastado del mes, cuotas del mes, tus personales del mes y últimos
+  movimientos.
 - **Resumen (`/resumen`)**: mes por mes, quién pagó cuánto de lo compartido,
-  la parte que le tocaba a cada uno y el neto del mes; gastos por categoría;
+  la parte que le tocaba a cada uno y el neto del mes; el estado del cierre
+  (saldado ✓ / a transferir / en curso, con deshacer); gastos por categoría;
   deudas activas por persona (cuota mensual y lo que falta); y la lista
   completa de movimientos del mes con filtros y borrar (reemplaza al viejo
   Historial — la URL `/historial` redirige acá).
@@ -46,8 +52,10 @@ Abrí http://localhost:3000 → te redirige a `/login`. Necesitás `.env.local`
 ## Puesta al día (si venís de la versión anterior)
 
 1. **Correr `docs/migracion_v2.sql`** en Supabase > SQL Editor (idempotente).
-   Agrega `es_personal`, `profiles.telefono`, las policies de privacidad y el
-   trigger que solo deja existir a sus dos cuentas (perfil automático incluido).
+   Agrega `es_personal`, `profiles.telefono`, la tabla `meses_saldados` (el
+   tachado), las policies de privacidad y el trigger que solo deja existir a
+   sus dos cuentas (perfil automático incluido). **Sin este paso la app avisa
+   con un cartel y funciona en modo básico** (sin personales ni tachado).
 2. **Habilitar Google** como provider (sección siguiente).
 3. **Deployar** con las env vars nuevas (`.env.example`).
 
@@ -180,8 +188,15 @@ soporta share target de PWAs; usá el atajo.
   con el contexto del mes (por persona, categorías, deudas) arriba.
 - **`/api/*` autenticadas por token propio** (no por sesión): el middleware
   las excluye y cada una valida lo suyo (`INGESTA_TOKEN`, firma de Meta).
-- **Pago de saldo** = movimiento con `prop_pagador = 0` y categoría `ajuste`,
-  excluido de los totales de consumo. Deudas a terceros no entran al saldo.
+- **Tachar en vez de registrar transferencias**: saldar un mes no crea
+  movimientos; agrega una fila en `meses_saldados` (con el monto como
+  referencia y deshacer). Si después de tachar se carga o borra algo de ese
+  mes, el Resumen lo avisa. Los viejos "pagos de saldo" (categoría `ajuste`)
+  se siguen contemplando en el neto de su mes. Deudas a terceros no entran
+  al saldo: se tachan cuota a cuota en `/deudas`.
+- **Degradación con gracia**: si la migración v2 no se corrió, la app avisa
+  con un cartel y lo básico (cargar y dividir gastos compartidos) sigue
+  funcionando.
 - Formato de plata `es-AR` sin decimales en pantalla; los centavos viven en
   la DB. Fechas de ingesta externa en hora argentina.
 
@@ -199,7 +214,7 @@ app/
   auth/callback/      canje de código, allowlist y perfil automático
   api/ingesta/        POST con token: Forms, atajos, etc.
   api/whatsapp/       webhook Meta Cloud API (texto libre + confirmación)
-components/           Nav, LogoutButton, PerfilSetup, SaldarButton, SwRegister
+components/           Nav, TacharMes, LogoutButton, PerfilSetup, SwRegister
 lib/
   auth.ts             cuentas habilitadas (allowlist + perfil por mail)
   parsear-gasto.ts    parser de texto libre ("12500 súper")

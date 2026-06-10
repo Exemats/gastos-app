@@ -2,9 +2,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { plata, plataExacta, nombreMes, fechaCorta, hoyISO, mesShift } from '@/lib/format'
-import type { Deuda, Movimiento, Profile } from '@/lib/types'
+import {
+  plata,
+  plataExacta,
+  nombreMes,
+  fechaCorta,
+  hoyISO,
+  mesShift,
+  calcularBalance,
+} from '@/lib/format'
+import type { Deuda, MesSaldado, Movimiento, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
+import TacharMes from '@/components/TacharMes'
 
 type Filtro = 'todos' | 'compartidos' | 'mios'
 
@@ -13,6 +22,8 @@ export default function ResumenPage() {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [deudas, setDeudas] = useState<Deuda[]>([])
   const [perfiles, setPerfiles] = useState<Profile[]>([])
+  const [saldados, setSaldados] = useState<MesSaldado[]>([])
+  const [hayTachado, setHayTachado] = useState(true) // false si falta la migración
   const [userId, setUserId] = useState<string | null>(null)
   const [cargando, setCargando] = useState(true)
 
@@ -21,20 +32,24 @@ export default function ResumenPage() {
   const [borrando, setBorrando] = useState<string | null>(null)
 
   const cargar = useCallback(async () => {
-    const [{ data: u }, { data: m }, { data: d }, { data: p }] = await Promise.all([
-      supabase.auth.getUser(),
-      supabase
-        .from('movimientos')
-        .select('*')
-        .order('fecha', { ascending: false })
-        .order('created_at', { ascending: false }),
-      supabase.from('deudas').select('*').eq('activa', true),
-      supabase.from('profiles').select('id, nombre, porcentaje'),
-    ])
+    const [{ data: u }, { data: m }, { data: d }, { data: p }, rSaldados] =
+      await Promise.all([
+        supabase.auth.getUser(),
+        supabase
+          .from('movimientos')
+          .select('*')
+          .order('fecha', { ascending: false })
+          .order('created_at', { ascending: false }),
+        supabase.from('deudas').select('*').eq('activa', true),
+        supabase.from('profiles').select('id, nombre, porcentaje'),
+        supabase.from('meses_saldados').select('*'),
+      ])
     setUserId(u.user?.id ?? null)
     setMovs((m ?? []) as Movimiento[])
     setDeudas((d ?? []) as Deuda[])
     setPerfiles((p ?? []).map((x) => ({ ...x, porcentaje: Number(x.porcentaje) })))
+    setSaldados((rSaldados.data ?? []) as MesSaldado[])
+    setHayTachado(!rSaldados.error)
     setCargando(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -103,6 +118,29 @@ export default function ResumenPage() {
         .filter((x) => x.deudas.length > 0),
     [perfiles, deudas]
   )
+
+  // --- cierre del mes: neto real a transferir (incluye ajustes viejos) ---
+  const compartidosMes = useMemo(
+    () => movsMes.filter((m) => !m.es_personal),
+    [movsMes]
+  )
+  const cierre = useMemo(() => {
+    if (perfiles.length !== 2) return null
+    const [p1, p2] = perfiles
+    const puso = calcularBalance(compartidosMes, perfiles)
+    const diff = (puso.get(p1.id) ?? 0) - (puso.get(p2.id) ?? 0)
+    return {
+      deudor: diff > 0 ? p2 : p1,
+      acreedor: diff > 0 ? p1 : p2,
+      monto: Math.abs(diff),
+      saldado: saldados.find((s) => s.mes === mes) ?? null,
+    }
+  }, [perfiles, compartidosMes, saldados, mes])
+
+  async function destachar() {
+    const { error } = await supabase.from('meses_saldados').delete().eq('mes', mes)
+    if (!error) cargar()
+  }
 
   // --- lista filtrable ---
   const visibles = movsMes.filter((m) =>
@@ -196,6 +234,62 @@ export default function ResumenPage() {
                 </span>
                 .
               </p>
+            )}
+
+            {/* Cierre del mes: a principio del mes siguiente se transfiere y se tacha */}
+            {cierre && hayTachado && (compartidosMes.length > 0 || cierre.saldado) && (
+              <div className="mt-4 border-t border-linea pt-3 text-sm">
+                {cierre.saldado ? (
+                  <div className="flex flex-wrap items-baseline justify-between gap-1">
+                    <p className="font-semibold text-verde">
+                      Saldado ✓{' '}
+                      <span className="font-normal text-tinta-suave">
+                        el {fechaCorta(cierre.saldado.created_at)}
+                        {cierre.saldado.monto != null &&
+                          ` · se transfirieron ${plata(Number(cierre.saldado.monto))}`}
+                      </span>
+                    </p>
+                    <button
+                      className="text-xs text-tinta-suave underline underline-offset-2"
+                      onClick={destachar}
+                    >
+                      Deshacer
+                    </button>
+                    {cierre.saldado.monto != null &&
+                      Math.abs(Number(cierre.saldado.monto) - cierre.monto) >= 1 && (
+                        <p className="w-full text-xs text-rojo">
+                          Ojo: después de tachar cambió el mes — ahora el neto da{' '}
+                          <span className="num">{plata(cierre.monto)}</span>. Si hace falta,
+                          deshacé, ajusten y tachen de nuevo.
+                        </p>
+                      )}
+                  </div>
+                ) : cierre.monto < 1 ? (
+                  <p className="font-medium text-verde">
+                    A mano ✓ — no hay nada que transferir.
+                  </p>
+                ) : esMesActual ? (
+                  <p className="text-tinta-suave">
+                    Mes en curso: por ahora{' '}
+                    <span className="font-medium text-tinta">
+                      {cierre.deudor.nombre} le debe{' '}
+                      <span className="num">{plata(cierre.monto)}</span> a{' '}
+                      {cierre.acreedor.nombre}
+                    </span>
+                    . Se transfiere y se tacha a principios del mes que viene.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <p>
+                      <span className="font-semibold">{cierre.deudor.nombre}</span>
+                      {cierre.deudor.id === userId ? ' (vos)' : ''} le tiene que transferir{' '}
+                      <span className="num font-semibold">{plata(cierre.monto)}</span> a{' '}
+                      <span className="font-semibold">{cierre.acreedor.nombre}</span>.
+                    </p>
+                    <TacharMes mes={mes} monto={cierre.monto} prominente onDone={cargar} />
+                  </div>
+                )}
+              </div>
             )}
           </section>
 

@@ -120,9 +120,45 @@ update public.profiles p set nombre = 'Vicky', porcentaje = 0.350
 -- Authentication > Users en el dashboard; su perfil cae en cascada.
 
 
+-- ---------------------------------------------------------------------
+-- 5. MESES SALDADOS — el "tachado" de la división mensual
+-- A principio de mes se mira cuánto dio el mes anterior, se transfiere
+-- la diferencia, y se tacha acá. No se carga ningún movimiento: la fila
+-- marca que ese mes ya está arreglado y guarda el monto de referencia.
+-- ---------------------------------------------------------------------
+create table if not exists public.meses_saldados (
+  mes          text primary key check (mes ~ '^[0-9]{4}-[0-9]{2}$'),
+  monto        numeric(12,2),
+  saldado_por  uuid references public.profiles (id),
+  created_at   timestamptz not null default now()
+);
+
+comment on table public.meses_saldados is
+  'Un mes acá = la división de ese mes ya se transfirió ("tachado"). monto = cuánto se transfirió, como referencia.';
+
+alter table public.meses_saldados enable row level security;
+
+drop policy if exists "auth_all_select" on public.meses_saldados;
+drop policy if exists "auth_all_insert" on public.meses_saldados;
+drop policy if exists "auth_all_update" on public.meses_saldados;
+drop policy if exists "auth_all_delete" on public.meses_saldados;
+create policy "auth_all_select" on public.meses_saldados for select to authenticated using (true);
+create policy "auth_all_insert" on public.meses_saldados for insert to authenticated with check (true);
+create policy "auth_all_update" on public.meses_saldados for update to authenticated using (true) with check (true);
+create policy "auth_all_delete" on public.meses_saldados for delete to authenticated using (true);
+
+-- (Opcional) si los meses viejos ya estaban arreglados entre ustedes,
+-- tachalos todos de una para arrancar limpio este mes:
+-- insert into public.meses_saldados (mes)
+--   select distinct to_char(fecha, 'YYYY-MM') from public.movimientos
+--   where fecha < date_trunc('month', current_date)
+-- on conflict do nothing;
+
+
 -- =====================================================================
 -- FIN. Después de correr esto:
 --   1. Verificá: select nombre, porcentaje, telefono from profiles;
---   2. Habilitá Google como provider (ver README, sección "Login con Google").
---   3. Deployá la app nueva con las env vars nuevas.
+--   2. Verificá: select * from meses_saldados; (vacía, pero existe)
+--   3. Habilitá Google como provider (ver README, sección "Login con Google").
+--   4. Deployá la app nueva con las env vars nuevas.
 -- =====================================================================
