@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { plata, plataExacta, fechaCorta } from '@/lib/format'
+import { parsearMonto } from '@/lib/parsear-gasto'
 import type { Deuda, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
 
@@ -178,7 +179,8 @@ function NuevaDeudaForm({
   async function crear(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    const monto = Number(montoTotal.replace(',', '.'))
+    // entiende formato argentino: "12.500" = 12500, "12500,50" = 12500.5
+    const monto = parsearMonto(montoTotal.trim())
     const n = parseInt(cuotas, 10)
     if (!descripcion.trim()) return setError('Falta la descripción.')
     if (!monto || monto <= 0) return setError('Poné el monto total.')

@@ -2,6 +2,7 @@ export type Profile = {
   id: string
   nombre: string
   porcentaje: number
+  telefono?: string | null
 }
 
 export type Movimiento = {
@@ -13,6 +14,7 @@ export type Movimiento = {
   pagado_por: string
   prop_pagador: number | null
   categoria: string | null
+  es_personal: boolean
   created_at: string
 }
 
