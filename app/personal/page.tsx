@@ -15,6 +15,7 @@ export default function PersonalPage() {
   const supabase = createClient()
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [cargando, setCargando] = useState(true)
+  const [faltaMigracion, setFaltaMigracion] = useState(false)
   const [mes, setMes] = useState(hoyISO().slice(0, 7))
   const [borrando, setBorrando] = useState<string | null>(null)
 
@@ -22,12 +23,14 @@ export default function PersonalPage() {
     const {
       data: { user },
     } = await supabase.auth.getUser()
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('movimientos')
       .select('*')
       .eq('es_personal', true)
       .order('fecha', { ascending: false })
       .order('created_at', { ascending: false })
+    // si es_personal no existe todavía, la migración v2 no se corrió
+    setFaltaMigracion(Boolean(error))
     // RLS ya filtra a los tuyos; el filter de abajo es cinturón y tiradores
     setMovs(((data ?? []) as Movimiento[]).filter((m) => m.pagado_por === user?.id))
     setCargando(false)
@@ -63,6 +66,16 @@ export default function PersonalPage() {
       <p className="mb-4 mt-1 text-sm text-tinta-suave">
         Gastos personales: no se dividen, no tocan el saldo y solo vos los ves.
       </p>
+
+      {faltaMigracion && (
+        <div className="card mb-4 border-rojo bg-rojo-suave p-4 text-sm">
+          <p className="font-semibold text-rojo">Esta sección necesita la migración</p>
+          <p className="mt-1">
+            En Supabase → SQL Editor, pegá{' '}
+            <span className="font-mono text-xs">docs/migracion_v2.sql</span> y dale Run.
+          </p>
+        </div>
+      )}
 
       {/* Navegación de mes */}
       <div className="card mb-4 flex items-center justify-between px-2 py-2">

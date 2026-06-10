@@ -91,8 +91,9 @@ export async function registrarGasto(
     monto,
     pagado_por: pagador.id,
     categoria,
-    prop_pagador: esPersonal ? 1 : null,
-    es_personal: esPersonal,
+    // es_personal va solo cuando hace falta: lo compartido funciona
+    // aunque la migración v2 todavía no se haya corrido
+    ...(esPersonal ? { prop_pagador: 1, es_personal: true } : { prop_pagador: null }),
   })
   if (error) return { ok: false, mensaje: `Error al guardar: ${error.message}` }
 
