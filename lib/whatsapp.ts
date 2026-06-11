@@ -21,7 +21,7 @@ async function enviar(a: string, payload: Record<string, unknown>) {
 }
 
 export function textoWhatsApp(a: string, texto: string) {
-  return enviar(a, { text: { body: texto } })
+  return enviar(a, { type: 'text', text: { body: texto } })
 }
 
 /** Mensaje con botones de respuesta rápida (máx 3, títulos de hasta 20 chars). */
