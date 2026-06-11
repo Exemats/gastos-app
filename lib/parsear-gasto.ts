@@ -1,4 +1,5 @@
 import { CATEGORIAS } from './types'
+import { montoDescuento } from './descuento'
 
 /**
  * Parser de texto libre para cargar gastos desde la carga rápida, WhatsApp,
@@ -21,6 +22,8 @@ export type GastoParseado = {
   esMitad: boolean
   /** Préstamo o devolución: plata directa entre los dos, va al saldo del mes. */
   esAjuste: boolean
+  /** Descuento aplicado ("super 30000 30% tope 8000"): monto ya es el neto. */
+  descuento: { pct: number; tope: number | null; bruto: number } | null
   tipo: 'gasto_depto' | 'gasto_fijo'
   pagadorNombre: string | null
 }
@@ -61,6 +64,9 @@ const SINONIMOS: Record<string, (typeof CATEGORIAS)[number]> = {
   resto: 'salidas',
   restaurante: 'salidas',
   cine: 'salidas',
+  cafe: 'salidas',
+  cafeteria: 'salidas',
+  merienda: 'salidas',
   transporte: 'transporte',
   uber: 'transporte',
   didi: 'transporte',
@@ -83,6 +89,12 @@ const SINONIMOS: Record<string, (typeof CATEGORIAS)[number]> = {
   hogar: 'hogar',
   casa: 'hogar',
   ferreteria: 'hogar',
+  farmacia: 'salud',
+  remedios: 'salud',
+  medico: 'salud',
+  medica: 'salud',
+  dentista: 'salud',
+  salud: 'salud',
   otros: 'otros',
 }
 
@@ -154,6 +166,9 @@ export function parsearGasto(
   let pagadorNombre: string | null = null
   let triggerAjuste = ''
   let recibeYo = false // "me devolvió": el que escribe recibe
+  let descuentoPct: number | null = null
+  let tope: number | null = null
+  let esperandoTope = false // "tope 8000": el próximo número es el tope
   let anterior = ''
   const restantes: string[] = []
 
@@ -162,12 +177,33 @@ export function parsearGasto(
     const norm = sinAcentos(limpia)
     const prev = anterior
     anterior = norm
+    if (esperandoTope) {
+      esperandoTope = false
+      const t = parsearMonto(limpia)
+      if (t !== null) {
+        tope = t
+        continue
+      }
+    }
     if (monto === null) {
       const m = parsearMonto(limpia)
       if (m !== null) {
         monto = m
         continue
       }
+    }
+    // descuento de promo: "30%" (+ opcional "tope 8000")
+    const pctMatch = norm.match(/^(\d{1,3}(?:[.,]\d+)?)%$/)
+    if (pctMatch) {
+      const p = Number(pctMatch[1].replace(',', '.'))
+      if (p > 0 && p <= 100) {
+        descuentoPct = p
+        continue
+      }
+    }
+    if (norm === 'tope' || norm === 'reintegro') {
+      esperandoTope = true
+      continue
     }
     if (esAjuste && AJUSTE_PALABRAS.has(norm)) {
       triggerAjuste = norm
@@ -233,6 +269,7 @@ export function parsearGasto(
         esPersonal: false,
         esMitad: false,
         esAjuste: true,
+        descuento: null,
         tipo: 'gasto_depto',
         pagadorNombre,
       },
@@ -243,9 +280,19 @@ export function parsearGasto(
   if (!descripcion) descripcion = categoria ?? 'Gasto'
   descripcion = capitalizar(descripcion)
 
+  // descuento de promo: el monto guardado es el NETO (lo que costó de verdad)
+  let descuento: GastoParseado['descuento'] = null
+  if (descuentoPct != null) {
+    const d = montoDescuento(monto, descuentoPct, tope)
+    if (d > 0) {
+      descuento = { pct: descuentoPct, tope, bruto: monto }
+      monto = Math.round((monto - d) * 100) / 100
+    }
+  }
+
   return {
     ok: true,
-    gasto: { monto, descripcion, categoria, esPersonal, esMitad, esAjuste: false, tipo, pagadorNombre },
+    gasto: { monto, descripcion, categoria, esPersonal, esMitad, esAjuste: false, descuento, tipo, pagadorNombre },
   }
 }
 

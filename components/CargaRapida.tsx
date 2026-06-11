@@ -72,7 +72,8 @@ export default function CargaRapida({
     const res = await guardarGasto(supabase, {
       monto: g.monto,
       descripcion,
-      categoria: g.categoria,
+      // las categorías son obligatorias: sin pista, va a "otros"
+      categoria: g.categoria ?? (fijo ? 'servicios' : 'otros'),
       fecha,
       esPersonal: g.esPersonal,
       mitad: g.esMitad,
@@ -87,12 +88,16 @@ export default function CargaRapida({
       return
     }
 
+    // "super 30000 30% tope 8000": g.monto ya viene neto, se aclara la promo
+    const promo = g.descuento
+      ? `, ${g.descuento.pct}% off de ${plata(g.descuento.bruto)}`
+      : ''
     const mensaje =
       res.clase === 'deuda' && fijo?.paga_tercero
         ? `Anotado ✓ ${descripcion}: ${plata(parteTercero(g.monto, fijo))} como deuda con ${fijo.paga_tercero}.`
         : g.esAjuste
           ? `Anotado ✓ ${plata(g.monto)} — ${descripcion} (directo al saldo, puso ${pagador.nombre})`
-          : `Anotado ✓ ${plata(g.monto)} — ${descripcion} (${etiquetaDivision(g.esPersonal, g.esMitad, tipo, fijo)}, pagó ${pagador.nombre})`
+          : `Anotado ✓ ${plata(g.monto)} — ${descripcion} (${etiquetaDivision(g.esPersonal, g.esMitad, tipo, fijo)}, pagó ${pagador.nombre}${promo})`
     setTexto('')
     setHecho({ clase: res.clase, id: res.id, mensaje })
     router.refresh()

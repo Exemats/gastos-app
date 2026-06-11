@@ -5,6 +5,7 @@ import { CATEGORIAS, type Movimiento, type Profile } from '@/lib/types'
 import { etiquetaPartes } from '@/lib/format'
 import { parsearMonto } from '@/lib/parsear-gasto'
 import { errorLegible } from '@/lib/errores'
+import Descuento, { calcularDescuento } from '@/components/Descuento'
 
 type Division = 'partes' | 'mitad' | 'pagador' | 'custom'
 
@@ -41,6 +42,10 @@ export default function EditarMovimiento({
   const [pagadoPor, setPagadoPor] = useState(mov.pagado_por)
   const [division, setDivision] = useState<Division>(divisionDe(mov))
   const [personal, setPersonal] = useState(Boolean(mov.es_personal))
+  // descuento ex-post: se olvidaron al cargar y lo aplican acá (queda el neto)
+  const [conDescuento, setConDescuento] = useState(false)
+  const [descuentoPct, setDescuentoPct] = useState('')
+  const [topeReintegro, setTopeReintegro] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
 
@@ -52,10 +57,16 @@ export default function EditarMovimiento({
 
   async function guardar() {
     setError('')
-    const montoNum = parsearMonto(monto.trim())
+    let montoNum = parsearMonto(monto.trim())
     if (!montoNum || montoNum <= 0) return setError('Poné un monto mayor a cero.')
+    if (conDescuento) {
+      const d = calcularDescuento(montoNum, descuentoPct, topeReintegro)
+      if (!d) return setError('Poné el % de descuento (o destildá el descuento).')
+      montoNum = d.neto
+    }
     if (!descripcion.trim()) return setError('Falta la descripción.')
     if (!fecha) return setError('Falta la fecha.')
+    if (!categoria) return setError('Elegí una categoría — si ninguna pega, está «otros».')
 
     const prop = personal
       ? 1
@@ -119,6 +130,16 @@ export default function EditarMovimiento({
           />
         </div>
       </div>
+      {/* descuento ex-post: aplica % y tope sobre el monto de arriba */}
+      <Descuento
+        activo={conDescuento}
+        onActivo={setConDescuento}
+        pct={descuentoPct}
+        onPct={setDescuentoPct}
+        tope={topeReintegro}
+        onTope={setTopeReintegro}
+        bruto={parsearMonto(monto.trim()) ?? 0}
+      />
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="mb-1 block text-xs font-medium">Categoría</label>
@@ -127,7 +148,10 @@ export default function EditarMovimiento({
             value={categoria}
             onChange={(e) => setCategoria(e.target.value)}
           >
-            <option value="">sin categoría</option>
+            {/* los viejos sin categoría arrancan acá y eligen una al guardar */}
+            <option value="" disabled>
+              elegí una…
+            </option>
             {categorias.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -161,7 +185,7 @@ export default function EditarMovimiento({
           onChange={(e) => setDivision(e.target.value as Division)}
         >
           <option value="partes">Según sus partes ({etiquetaPartes(perfiles)})</option>
-          <option value="mitad">Mitad y mitad</option>
+          <option value="mitad">50/50</option>
           <option value="pagador">100% de quien pagó</option>
           {division === 'custom' && (
             <option value="custom">

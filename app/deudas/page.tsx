@@ -5,6 +5,7 @@ import { plata, plataExacta, fechaCorta } from '@/lib/format'
 import { parsearMonto } from '@/lib/parsear-gasto'
 import type { Deuda, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
+import Descuento, { calcularDescuento } from '@/components/Descuento'
 import { useRealtime } from '@/lib/use-realtime'
 import { avisar } from '@/lib/avisar'
 
@@ -181,6 +182,10 @@ function NuevaDeudaForm({
   const [montoTotal, setMontoTotal] = useState('')
   const [cuotas, setCuotas] = useState('')
   const [primeraCuota, setPrimeraCuota] = useState('')
+  // descuento de promo sobre el total: se guarda el neto
+  const [conDescuento, setConDescuento] = useState(false)
+  const [descuentoPct, setDescuentoPct] = useState('')
+  const [topeReintegro, setTopeReintegro] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
 
@@ -194,10 +199,15 @@ function NuevaDeudaForm({
     e.preventDefault()
     setError('')
     // entiende formato argentino: "12.500" = 12500, "12500,50" = 12500.5
-    const monto = parsearMonto(montoTotal.trim())
+    let monto = parsearMonto(montoTotal.trim())
     const n = parseInt(cuotas, 10)
     if (!descripcion.trim()) return setError('Falta la descripción.')
     if (!monto || monto <= 0) return setError('Poné el monto total.')
+    if (conDescuento) {
+      const d = calcularDescuento(monto, descuentoPct, topeReintegro)
+      if (!d) return setError('Poné el % de descuento (o destildá el descuento).')
+      monto = d.neto
+    }
     if (!n || n < 1) return setError('Poné la cantidad de cuotas.')
     if (acreedorTipo === 'externo' && !acreedorNombre.trim())
       return setError('¿A quién se le debe?')
@@ -277,6 +287,15 @@ function NuevaDeudaForm({
           onChange={(e) => setCuotas(e.target.value.replace(/\D/g, ''))}
         />
       </div>
+      <Descuento
+        activo={conDescuento}
+        onActivo={setConDescuento}
+        pct={descuentoPct}
+        onPct={setDescuentoPct}
+        tope={topeReintegro}
+        onTope={setTopeReintegro}
+        bruto={parsearMonto(montoTotal.trim()) ?? 0}
+      />
       <div>
         <label className="mb-1 block text-sm font-medium" htmlFor="primera">
           Primera cuota (opcional)

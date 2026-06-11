@@ -14,6 +14,7 @@ import {
 import { guardarGasto, parteTercero } from '@/lib/guardar-gasto'
 import { errorLegible } from '@/lib/errores'
 import Nav from '@/components/Nav'
+import Descuento, { calcularDescuento } from '@/components/Descuento'
 
 function ayerISO() {
   const d = new Date()
@@ -70,14 +71,16 @@ function CampoMonto({
   valor,
   onChange,
   conFoco = false,
+  className = '',
 }: {
   etiqueta?: string
   valor: string
   onChange: (v: string) => void
   conFoco?: boolean
+  className?: string
 }) {
   return (
-    <div>
+    <div className={className}>
       <label className="mb-1 block text-sm font-medium" htmlFor="monto">
         {etiqueta}
       </label>
@@ -103,13 +106,15 @@ function CampoFecha({
   etiqueta = 'Fecha',
   valor,
   onChange,
+  className = '',
 }: {
   etiqueta?: string
   valor: string
   onChange: (v: string) => void
+  className?: string
 }) {
   return (
-    <div>
+    <div className={className}>
       <div className="mb-1 flex items-center justify-between">
         <label className="block text-sm font-medium" htmlFor="fecha">
           {etiqueta}
@@ -150,15 +155,17 @@ function SelectorPersona({
   userId,
   valor,
   onChange,
+  className = '',
 }: {
   etiqueta: string
   perfiles: Profile[]
   userId: string | null
   valor: string
   onChange: (id: string) => void
+  className?: string
 }) {
   return (
-    <div>
+    <div className={className}>
       <p className="mb-1 text-sm font-medium">{etiqueta}</p>
       <ChipsOpciones
         enGrilla
@@ -197,9 +204,17 @@ function NuevoGastoForm() {
   const [division, setDivision] = useState<Division>(
     params.get('ambito') === 'personal' ? 'personal' : 'partes'
   )
+  // true = la eligió a mano: el catálogo solo sugiere, el selector manda
+  const [divisionManual, setDivisionManual] = useState(
+    params.get('ambito') === 'personal'
+  )
   const [categoria, setCategoria] = useState<string | null>(null)
   // true = la eligió a mano (o vino de un frecuente): no se pisa al tipear
   const [categoriaManual, setCategoriaManual] = useState(false)
+  // descuento de promo: un check; al marcarlo aparecen % y tope
+  const [conDescuento, setConDescuento] = useState(false)
+  const [descuentoPct, setDescuentoPct] = useState('')
+  const [topeReintegro, setTopeReintegro] = useState('')
 
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
@@ -262,7 +277,7 @@ function NuevoGastoForm() {
         ? fijosOk.find((x) => sinAcentos(x.nombre) === sinAcentos(fijoParam))
         : null
       if (fijoPedido) {
-        elegirFijo(fijoPedido)
+        elegirServicio(fijoPedido)
         return
       }
 
@@ -287,6 +302,7 @@ function NuevoGastoForm() {
           setCategoria(g.categoria)
           if (g.categoria) setCategoriaManual(true)
           setDivision(g.esPersonal ? 'personal' : g.esMitad ? 'mitad' : 'partes')
+          if (g.esPersonal || g.esMitad) setDivisionManual(true)
         }
       }
     }
@@ -299,18 +315,29 @@ function NuevoGastoForm() {
     // categoría sugerida por la descripción ("uber" → transporte),
     // solo mientras no haya una elegida a mano
     if (!categoriaManual) setCategoria(categoriaSugerida(v))
+    // si coincide con un servicio del catálogo, sugiere su división de la
+    // casa (50/50); el selector siempre puede pisarla
+    if (!divisionManual) {
+      const f = fijos.find((x) => coincideNombre(v, x.nombre))
+      setDivision(
+        f && !f.paga_tercero && Number(f.prop_pagador) === 0.5 ? 'mitad' : 'partes'
+      )
+    }
   }
 
-  function elegirFijo(f: GastoFijo) {
+  function elegirServicio(f: GastoFijo) {
     setModo('gasto')
     // los que paga un tercero (Expensas) llevan el mes en la descripción
     setDescripcion(
       f.paga_tercero ? `${f.nombre} ${nombreMes(hoyISO().slice(0, 7))}` : f.nombre
     )
-    if (f.monto_estimado) setMonto(String(f.monto_estimado))
+    if (f.monto_estimado && !monto.trim()) setMonto(String(f.monto_estimado))
     setCategoria('servicios')
     setCategoriaManual(true)
-    if (division === 'personal') setDivision('partes') // la regla la pone el catálogo
+    if (!f.paga_tercero) {
+      setDivision(Number(f.prop_pagador) === 0.5 ? 'mitad' : 'partes')
+      setDivisionManual(false) // es una sugerencia de la casa, no una elección
+    }
   }
 
   function elegirFrecuente(fr: Frecuente) {
@@ -319,6 +346,7 @@ function NuevoGastoForm() {
     setCategoria(fr.categoria)
     setCategoriaManual(Boolean(fr.categoria))
     setDivision(fr.esPersonal ? 'personal' : 'partes')
+    setDivisionManual(fr.esPersonal)
   }
 
   const yo = perfiles.find((p) => p.id === userId)
@@ -331,37 +359,39 @@ function NuevoGastoForm() {
       : null
   const esTercero = Boolean(fijoElegido?.paga_tercero)
   const montoNum = parsearMonto(monto.trim()) ?? 0
-  const montoTercero = fijoElegido ? parteTercero(montoNum, fijoElegido) : 0
-
-  const reglaFijo = !fijoElegido
-    ? null
-    : fijoElegido.paga_tercero
-      ? null // el caso tercero tiene su propio recuadro
-      : fijoElegido.prop_pagador != null
-        ? Number(fijoElegido.prop_pagador) === 0.5
-          ? 'mitad y mitad'
-          : `${Math.round(Number(fijoElegido.prop_pagador) * 100)}% de quien paga`
-        : `${etiquetaPartes(perfiles)} según sus partes`
+  // con descuento, todo se calcula sobre el neto (lo que costó de verdad)
+  const montoNeto = conDescuento
+    ? calcularDescuento(montoNum, descuentoPct, topeReintegro)?.neto ?? montoNum
+    : montoNum
+  const montoTercero = fijoElegido ? parteTercero(montoNeto, fijoElegido) : 0
 
   const DIVISIONES: { id: Division; etiqueta: string }[] = [
     { id: 'partes', etiqueta: etiquetaPartes(perfiles) },
-    { id: 'mitad', etiqueta: 'Mitad y mitad' },
-    { id: 'personal', etiqueta: 'Personal 🔒' },
+    { id: 'mitad', etiqueta: '50/50' },
+    { id: 'personal', etiqueta: '100% propio 🔒' },
   ]
   const NOTAS_DIVISION: Record<Division, string> = {
     partes: 'La regla general del depto: cada uno su parte.',
-    mitad: 'Partes iguales, sin importar quién pagó.',
-    personal: 'No se divide, no toca el saldo y solo vos lo ves.',
+    mitad: 'Partes iguales (un café, una salida, los servicios).',
+    personal: 'No se divide, no toca el saldo y solo vos lo ves (va a Personal).',
   }
 
   async function guardar(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     // entiende formato argentino: "12.500" = 12500, "12500,50" = 12500.5
-    const montoFinal = parsearMonto(monto.trim())
+    let montoFinal = parsearMonto(monto.trim())
     if (!montoFinal || montoFinal <= 0) {
       setError('Poné un monto mayor a cero.')
       return
+    }
+    if (modo === 'gasto' && conDescuento) {
+      const d = calcularDescuento(montoFinal, descuentoPct, topeReintegro)
+      if (!d) {
+        setError('Poné el % de descuento (o destildá el descuento).')
+        return
+      }
+      montoFinal = d.neto
     }
 
     setGuardando(true)
@@ -383,6 +413,11 @@ function NuevoGastoForm() {
         setError('Falta la descripción.')
         return
       }
+      if (!categoria && !esTercero) {
+        setGuardando(false)
+        setError('Elegí una categoría — si ninguna pega, está «otros».')
+        return
+      }
       const personal = division === 'personal'
       r = await guardarGasto(supabase, {
         monto: montoFinal,
@@ -390,8 +425,8 @@ function NuevoGastoForm() {
         categoria,
         fecha,
         esPersonal: personal,
-        // el fijo manda su regla; "mitad" solo cuando se eligió a mano
-        mitad: !fijoElegido && division === 'mitad',
+        // la división la decide el selector (el catálogo solo la sugiere)
+        prop: division === 'mitad' ? 0.5 : null,
         tipo: fijoElegido ? 'gasto_fijo' : 'gasto_depto',
         // lo personal y lo que paga un tercero corren por cuenta de quien carga
         pagadorId: personal || esTercero ? userId ?? '' : pagadoPor || userId || '',
@@ -410,7 +445,7 @@ function NuevoGastoForm() {
   }
 
   return (
-    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-lg">
+    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-2xl">
       <h1 className="mb-4 text-2xl">Cargar</h1>
 
       {/* Qué se anota: un gasto, o plata que se prestaron/devolvieron */}
@@ -456,31 +491,10 @@ function NuevoGastoForm() {
         </div>
       )}
 
-      {modo === 'gasto' && fijos.length > 0 && (
-        <div className="mb-4">
-          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-tinta-suave">
-            Fijos del mes
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {fijos.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                className="chip !text-[13px]"
-                data-activo={fijoElegido?.id === f.id}
-                onClick={() => elegirFijo(f)}
-              >
-                {f.nombre}
-                {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {modo === 'gasto' ? (
         /* ============================ GASTO ============================ */
-        <form onSubmit={guardar} className="card grid gap-4 p-5">
+        /* en pantalla grande el formulario va en dos columnas */
+        <form onSubmit={guardar} className="card grid gap-4 p-5 lg:grid-cols-2 lg:gap-x-6">
           <CampoMonto
             conFoco
             etiqueta={esTercero ? `Monto total (lo que pagó ${fijoElegido?.paga_tercero})` : 'Monto'}
@@ -509,16 +523,22 @@ function NuevoGastoForm() {
                 <option key={s} value={s} />
               ))}
             </datalist>
-            {reglaFijo && (
-              <p className="mt-1.5 text-xs text-tinta-suave">
-                «{fijoElegido?.nombre}» es un fijo del catálogo: se divide{' '}
-                <span className="font-medium text-tinta">{reglaFijo}</span>.
-              </p>
-            )}
+          </div>
+
+          <div className="lg:col-span-2">
+            <Descuento
+              activo={conDescuento}
+              onActivo={setConDescuento}
+              pct={descuentoPct}
+              onPct={setDescuentoPct}
+              tope={topeReintegro}
+              onTope={setTopeReintegro}
+              bruto={montoNum}
+            />
           </div>
 
           {esTercero && fijoElegido?.paga_tercero ? (
-            <div className="rounded-lg bg-birome-suave p-3 text-sm">
+            <div className="rounded-lg bg-birome-suave p-3 text-sm lg:col-span-2">
               <p>
                 Lo paga <span className="font-semibold">{fijoElegido.paga_tercero}</span>. Acá
                 se anota la mitad de {yo?.nombre ?? 'quien carga'} —{' '}
@@ -541,25 +561,26 @@ function NuevoGastoForm() {
                 />
               )}
 
-              {!fijoElegido && (
-                <div>
-                  <p className="mb-1 text-sm font-medium">¿Cómo se divide?</p>
-                  <ChipsOpciones
-                    opciones={DIVISIONES}
-                    valor={division}
-                    onChange={setDivision}
-                  />
-                  <p className="mt-1.5 text-xs text-tinta-suave">
-                    {NOTAS_DIVISION[division]}
-                  </p>
-                </div>
-              )}
+              <div>
+                <p className="mb-1 text-sm font-medium">¿Cómo se divide?</p>
+                <ChipsOpciones
+                  opciones={DIVISIONES}
+                  valor={division}
+                  onChange={(d) => {
+                    setDivision(d)
+                    setDivisionManual(true)
+                  }}
+                />
+                <p className="mt-1.5 text-xs text-tinta-suave">
+                  {NOTAS_DIVISION[division]}
+                </p>
+              </div>
             </>
           )}
 
           {!esTercero && (
-            <div>
-              <p className="mb-1 text-sm font-medium">Categoría (opcional)</p>
+            <div className="lg:col-span-2">
+              <p className="mb-1 text-sm font-medium">Categoría</p>
               <div className="flex flex-wrap gap-2">
                 {CATEGORIAS.map((c) => (
                   <button
@@ -577,6 +598,27 @@ function NuevoGastoForm() {
                   </button>
                 ))}
               </div>
+              {/* servicios despliega las subcategorías del catálogo: un tap
+                  precarga descripción, monto estimado y la división de la casa */}
+              {categoria === 'servicios' && fijos.length > 0 && (
+                <>
+                  <p className="mb-1 mt-2 text-xs text-tinta-suave">¿Cuál?</p>
+                  <div className="flex flex-wrap gap-2">
+                    {fijos.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className="chip !text-[13px]"
+                        data-activo={fijoElegido?.id === f.id}
+                        onClick={() => elegirServicio(f)}
+                      >
+                        {f.nombre}
+                        {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -586,7 +628,7 @@ function NuevoGastoForm() {
             onChange={setFecha}
           />
 
-          <button className="btn btn-primario" disabled={guardando || ok}>
+          <button className="btn btn-primario lg:self-end" disabled={guardando || ok}>
             {ok
               ? 'Anotado ✓'
               : guardando
@@ -597,11 +639,11 @@ function NuevoGastoForm() {
                     ? 'Anotar en lo tuyo 🔒'
                     : 'Anotar en la libreta'}
           </button>
-          {error && <p className="text-sm text-rojo">{error}</p>}
+          {error && <p className="text-sm text-rojo lg:col-span-2">{error}</p>}
         </form>
       ) : (
         /* ===================== PLATA ENTRE NOSOTROS ===================== */
-        <form onSubmit={guardar} className="card grid gap-4 p-5">
+        <form onSubmit={guardar} className="card grid gap-4 p-5 lg:grid-cols-2 lg:gap-x-6">
           <SelectorPersona
             etiqueta="¿Quién puso la plata?"
             perfiles={perfiles}
@@ -637,7 +679,7 @@ function NuevoGastoForm() {
 
           <CampoFecha valor={fecha} onChange={setFecha} />
 
-          <p className="rounded-lg bg-birome-suave p-3 text-xs text-tinta-suave">
+          <p className="rounded-lg bg-birome-suave p-3 text-xs text-tinta-suave lg:col-span-2">
             Va directo al saldo del mes, sin contar como gasto:{' '}
             {pagadoPor && pagadoPor !== userId ? (
               <>
@@ -652,10 +694,10 @@ function NuevoGastoForm() {
             Sirve para préstamos y para devolver de a poco.
           </p>
 
-          <button className="btn btn-primario" disabled={guardando || ok}>
+          <button className="btn btn-primario lg:col-span-2" disabled={guardando || ok}>
             {ok ? 'Anotado ✓' : guardando ? 'Anotando…' : 'Anotar en el saldo'}
           </button>
-          {error && <p className="text-sm text-rojo">{error}</p>}
+          {error && <p className="text-sm text-rojo lg:col-span-2">{error}</p>}
         </form>
       )}
       <Nav />

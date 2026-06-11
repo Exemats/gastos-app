@@ -45,8 +45,9 @@ instalable en el celular.
   opcionales** (lápiz para definirlos; la barra pasa a ámbar al 80% y a rojo
   al pasarse); deudas activas por persona; botón **"copiar resumen del
   mes"** listo para pegar en el chat; y la lista completa de movimientos
-  con búsqueda, filtros, **export CSV** y **corrección manual** (lápiz:
-  monto, fecha, categoría, quién pagó y cómo se divide). En el celular la
+  con búsqueda, **filtros por ámbito, categoría y quién pagó**, **export
+  CSV** y **corrección manual** (lápiz: monto, fecha, categoría, quién
+  pagó, cómo se divide y descuento ex-post). En el celular la
   lista va en desplegables por categoría; en pantalla grande es una tabla y
   el resumen queda a la izquierda con gráficos a la derecha. La URL
   `/historial` redirige acá.
@@ -54,14 +55,22 @@ instalable en el celular.
   no tocan el saldo y **el otro no los ve** — lo garantiza Row Level Security
   en la base, no solo la pantalla.
 - **Cargar (`/nuevo`)** — dos modos en una pantalla. **Gasto**: monto y
-  descripción con autocompletado, **frecuentes y fijos a un tap**, quién
-  pagó y una sola pregunta de división — **65/35 · mitad y mitad ·
-  personal 🔒** (lo personal va directo a tu sección privada). Los fijos se
-  detectan solos por la descripción y aplican su regla del catálogo
-  (Expensas muestra "lo paga Seba" y anota la deuda); la categoría se
-  sugiere sola ("uber" → transporte). **Plata entre nosotros**: préstamos
-  y devoluciones de a poco — quién puso la plata, monto y listo: va
-  directo al saldo del mes, sin contar como gasto.
+  descripción con autocompletado, frecuentes a un tap, quién pagó y una
+  sola pregunta de división — **65/35 · 50/50 · 100% propio 🔒** (lo
+  propio va directo a tu sección Personal; un café 50/50 es elegir el
+  chip y listo). La categoría es **obligatoria** pero casi nunca la
+  tocás: se sugiere sola ("uber" → transporte, "café" → salidas,
+  "farmacia" → salud) y siempre está "otros" de comodín; **servicios
+  despliega sus subcategorías** del catálogo (Luz, Gas, Internet, Agua,
+  ABL, Expensas): un tap precarga
+  descripción, monto estimado y la división de la casa — que solo es una
+  sugerencia, el selector siempre manda. El check **"Tuvo descuento"**
+  despliega % y tope de reintegro y guarda el neto exacto. **Expensas
+  (Seba)** es el caso especial: la carga uno de los dos pero la paga
+  Seba, así que se anota la mitad como deuda con él, sin tocar el
+  saldo. **Plata entre
+  nosotros**: préstamos y devoluciones de a poco — quién puso la plata,
+  monto y listo: va directo al saldo del mes, sin contar como gasto.
 - **Modo oscuro automático**: sigue la configuración del celu/compu.
 - **Tiempo real**: lo que carga, edita o tacha uno aparece al instante en el
   celu del otro, sin refrescar (Supabase Realtime, respetando RLS: los
@@ -71,7 +80,12 @@ instalable en el celular.
   que lo tachen) y "⚠ delivery pasó el límite". Cada uno las activa con un
   botón en el inicio, por dispositivo.
 - **Deudas (`/deudas`)**: cuotas con progreso, "Pagué una cuota" con deshacer,
-  deudas a terceros o entre ustedes.
+  deudas a terceros o entre ustedes. La deuda nueva también admite el check
+  de descuento (se anota el total neto y las cuotas salen de ahí).
+- **Descuentos de promos**: en gastos, cuotas y edición hay un check "Tuvo
+  descuento"; recién al marcarlo aparecen el % y el tope de reintegro (si
+  hay), y se guarda **el neto exacto**. Si te olvidaste al cargar, se aplica
+  ex-post desde el lápiz del Resumen.
 - **Carga sin abrir la app**: bot de WhatsApp ("12500 súper" y listo),
   Google Forms, atajos del celu y compartir texto a la app (Android). Ver
   abajo.
@@ -148,6 +162,7 @@ Todas las vías terminan en el mismo lugar y entienden el mismo texto libre:
 > `12500 súper` · `luz 45000` (lo marca como fijo) · `personal 8000 gym` ·
 > `vicky 9000 farmacia` (lo pagó Vicky) · `cena 20000 mitad` (mitad y mitad) ·
 > `presté 50000` / `vicky devolvió 10000` (directo al saldo) ·
+> `super 30000 30% tope 8000` (descuento de promo: anota el neto, $22.000) ·
 > `1.234,56 ferretería`
 
 ### Bot de WhatsApp (recomendado)
@@ -185,9 +200,10 @@ incluye el botón **"✓ Tachar"** para saldarlo directo desde el chat.
 
 1. Creá un Form con estos campos (títulos exactos): **Monto** (respuesta
    corta), **Descripción** (corta), **Quién pagó** (opción múltiple:
-   Mati / Vicky), **Categoría** (opción múltiple, opcional: súper, salidas,
-   transporte, delivery, regalos, servicios, hogar, otros), **¿Personal?**
-   (opción múltiple: No / Sí).
+   Mati / Vicky), **Categoría** (opción múltiple, opcional: súper, delivery,
+   salidas, transporte, servicios, hogar, salud, regalos, otros), **¿Personal?**
+   (opción múltiple: No / Sí). Si la categoría falta, se deduce de la
+   descripción; si no hay pista, va a "otros".
 2. En el Form: ⋮ → **Apps Script**, pegá esto (con tu URL y tu token):
 
    ```js

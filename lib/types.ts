@@ -64,13 +64,20 @@ export type Presupuesto = {
   monto: number
 }
 
+/**
+ * Categorías de gasto: amplias, claras y ordenadas por uso (la más
+ * frecuente primero, "otros" como comodín al final). Son obligatorias:
+ * la app las sugiere sola desde la descripción. 'servicios' despliega
+ * las subcategorías del catálogo gastos_fijos (luz, gas, expensas…).
+ */
 export const CATEGORIAS = [
   'súper',
+  'delivery',
   'salidas',
   'transporte',
-  'delivery',
-  'regalos',
   'servicios',
   'hogar',
+  'salud',
+  'regalos',
   'otros',
 ] as const
