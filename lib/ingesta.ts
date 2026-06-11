@@ -49,18 +49,20 @@ export async function registrarGasto(
   let esPersonal: boolean
   let esMitad = false
   let esAjuste = false
+  let descuento: { pct: number; bruto: number } | null = null
   let tipo: 'gasto_depto' | 'gasto_fijo' = 'gasto_depto'
   let nombreEnTexto: string | null = null
 
   if (entrada.texto?.trim()) {
     const r = parsearGasto(entrada.texto, perfiles.map((p) => p.nombre))
     if (!r.ok) return { ok: false, mensaje: r.error }
-    monto = r.gasto.monto
+    monto = r.gasto.monto // si hubo descuento ("30% tope 8000"), ya es el neto
     descripcion = r.gasto.descripcion
     categoria = r.gasto.categoria
     esPersonal = r.gasto.esPersonal
     esMitad = r.gasto.esMitad
     esAjuste = r.gasto.esAjuste
+    descuento = r.gasto.descuento
     tipo = r.gasto.tipo
     nombreEnTexto = r.gasto.pagadorNombre
   } else {
@@ -187,9 +189,10 @@ export async function registrarGasto(
       : prop == null
         ? 'compartido'
         : `${Math.round(prop * 100)}% del pagador`
+  const promo = descuento ? `, ${descuento.pct}% off de ${plata(descuento.bruto)}` : ''
   return {
     ok: true,
-    mensaje: `Anotado ✓ ${plata(monto)} — ${descripcion} (${division}, pagó ${pagador.nombre})`,
+    mensaje: `Anotado ✓ ${plata(monto)} — ${descripcion} (${division}, pagó ${pagador.nombre}${promo})`,
   }
 }
 

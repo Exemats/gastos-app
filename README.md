@@ -45,8 +45,9 @@ instalable en el celular.
   opcionales** (lápiz para definirlos; la barra pasa a ámbar al 80% y a rojo
   al pasarse); deudas activas por persona; botón **"copiar resumen del
   mes"** listo para pegar en el chat; y la lista completa de movimientos
-  con búsqueda, filtros, **export CSV** y **corrección manual** (lápiz:
-  monto, fecha, categoría, quién pagó y cómo se divide). En el celular la
+  con búsqueda, **filtros por ámbito, categoría y quién pagó**, **export
+  CSV** y **corrección manual** (lápiz: monto, fecha, categoría, quién
+  pagó, cómo se divide y descuento ex-post). En el celular la
   lista va en desplegables por categoría; en pantalla grande es una tabla y
   el resumen queda a la izquierda con gráficos a la derecha. La URL
   `/historial` redirige acá.
@@ -63,9 +64,11 @@ instalable en el celular.
   despliega sus subcategorías** del catálogo (Luz, Gas, Internet, Agua,
   ABL, Expensas): un tap precarga
   descripción, monto estimado y la división de la casa — que solo es una
-  sugerencia, el selector siempre manda. **Expensas (Seba)** es el caso
-  especial: la carga uno de los dos pero la paga Seba, así que se anota
-  la mitad como deuda con él, sin tocar el saldo. **Plata entre
+  sugerencia, el selector siempre manda. El check **"Tuvo descuento"**
+  despliega % y tope de reintegro y guarda el neto exacto. **Expensas
+  (Seba)** es el caso especial: la carga uno de los dos pero la paga
+  Seba, así que se anota la mitad como deuda con él, sin tocar el
+  saldo. **Plata entre
   nosotros**: préstamos y devoluciones de a poco — quién puso la plata,
   monto y listo: va directo al saldo del mes, sin contar como gasto.
 - **Modo oscuro automático**: sigue la configuración del celu/compu.
@@ -77,7 +80,12 @@ instalable en el celular.
   que lo tachen) y "⚠ delivery pasó el límite". Cada uno las activa con un
   botón en el inicio, por dispositivo.
 - **Deudas (`/deudas`)**: cuotas con progreso, "Pagué una cuota" con deshacer,
-  deudas a terceros o entre ustedes.
+  deudas a terceros o entre ustedes. La deuda nueva también admite el check
+  de descuento (se anota el total neto y las cuotas salen de ahí).
+- **Descuentos de promos**: en gastos, cuotas y edición hay un check "Tuvo
+  descuento"; recién al marcarlo aparecen el % y el tope de reintegro (si
+  hay), y se guarda **el neto exacto**. Si te olvidaste al cargar, se aplica
+  ex-post desde el lápiz del Resumen.
 - **Carga sin abrir la app**: bot de WhatsApp ("12500 súper" y listo),
   Google Forms, atajos del celu y compartir texto a la app (Android). Ver
   abajo.
@@ -154,6 +162,7 @@ Todas las vías terminan en el mismo lugar y entienden el mismo texto libre:
 > `12500 súper` · `luz 45000` (lo marca como fijo) · `personal 8000 gym` ·
 > `vicky 9000 farmacia` (lo pagó Vicky) · `cena 20000 mitad` (mitad y mitad) ·
 > `presté 50000` / `vicky devolvió 10000` (directo al saldo) ·
+> `super 30000 30% tope 8000` (descuento de promo: anota el neto, $22.000) ·
 > `1.234,56 ferretería`
 
 ### Bot de WhatsApp (recomendado)

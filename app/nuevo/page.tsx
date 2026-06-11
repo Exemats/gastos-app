@@ -14,6 +14,7 @@ import {
 import { guardarGasto, parteTercero } from '@/lib/guardar-gasto'
 import { errorLegible } from '@/lib/errores'
 import Nav from '@/components/Nav'
+import Descuento, { calcularDescuento } from '@/components/Descuento'
 
 function ayerISO() {
   const d = new Date()
@@ -70,14 +71,16 @@ function CampoMonto({
   valor,
   onChange,
   conFoco = false,
+  className = '',
 }: {
   etiqueta?: string
   valor: string
   onChange: (v: string) => void
   conFoco?: boolean
+  className?: string
 }) {
   return (
-    <div>
+    <div className={className}>
       <label className="mb-1 block text-sm font-medium" htmlFor="monto">
         {etiqueta}
       </label>
@@ -103,13 +106,15 @@ function CampoFecha({
   etiqueta = 'Fecha',
   valor,
   onChange,
+  className = '',
 }: {
   etiqueta?: string
   valor: string
   onChange: (v: string) => void
+  className?: string
 }) {
   return (
-    <div>
+    <div className={className}>
       <div className="mb-1 flex items-center justify-between">
         <label className="block text-sm font-medium" htmlFor="fecha">
           {etiqueta}
@@ -150,15 +155,17 @@ function SelectorPersona({
   userId,
   valor,
   onChange,
+  className = '',
 }: {
   etiqueta: string
   perfiles: Profile[]
   userId: string | null
   valor: string
   onChange: (id: string) => void
+  className?: string
 }) {
   return (
-    <div>
+    <div className={className}>
       <p className="mb-1 text-sm font-medium">{etiqueta}</p>
       <ChipsOpciones
         enGrilla
@@ -204,6 +211,10 @@ function NuevoGastoForm() {
   const [categoria, setCategoria] = useState<string | null>(null)
   // true = la eligió a mano (o vino de un frecuente): no se pisa al tipear
   const [categoriaManual, setCategoriaManual] = useState(false)
+  // descuento de promo: un check; al marcarlo aparecen % y tope
+  const [conDescuento, setConDescuento] = useState(false)
+  const [descuentoPct, setDescuentoPct] = useState('')
+  const [topeReintegro, setTopeReintegro] = useState('')
 
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
@@ -348,7 +359,11 @@ function NuevoGastoForm() {
       : null
   const esTercero = Boolean(fijoElegido?.paga_tercero)
   const montoNum = parsearMonto(monto.trim()) ?? 0
-  const montoTercero = fijoElegido ? parteTercero(montoNum, fijoElegido) : 0
+  // con descuento, todo se calcula sobre el neto (lo que costó de verdad)
+  const montoNeto = conDescuento
+    ? calcularDescuento(montoNum, descuentoPct, topeReintegro)?.neto ?? montoNum
+    : montoNum
+  const montoTercero = fijoElegido ? parteTercero(montoNeto, fijoElegido) : 0
 
   const DIVISIONES: { id: Division; etiqueta: string }[] = [
     { id: 'partes', etiqueta: etiquetaPartes(perfiles) },
@@ -365,10 +380,18 @@ function NuevoGastoForm() {
     e.preventDefault()
     setError('')
     // entiende formato argentino: "12.500" = 12500, "12500,50" = 12500.5
-    const montoFinal = parsearMonto(monto.trim())
+    let montoFinal = parsearMonto(monto.trim())
     if (!montoFinal || montoFinal <= 0) {
       setError('Poné un monto mayor a cero.')
       return
+    }
+    if (modo === 'gasto' && conDescuento) {
+      const d = calcularDescuento(montoFinal, descuentoPct, topeReintegro)
+      if (!d) {
+        setError('Poné el % de descuento (o destildá el descuento).')
+        return
+      }
+      montoFinal = d.neto
     }
 
     setGuardando(true)
@@ -422,7 +445,7 @@ function NuevoGastoForm() {
   }
 
   return (
-    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-lg">
+    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-2xl">
       <h1 className="mb-4 text-2xl">Cargar</h1>
 
       {/* Qué se anota: un gasto, o plata que se prestaron/devolvieron */}
@@ -470,7 +493,8 @@ function NuevoGastoForm() {
 
       {modo === 'gasto' ? (
         /* ============================ GASTO ============================ */
-        <form onSubmit={guardar} className="card grid gap-4 p-5">
+        /* en pantalla grande el formulario va en dos columnas */
+        <form onSubmit={guardar} className="card grid gap-4 p-5 lg:grid-cols-2 lg:gap-x-6">
           <CampoMonto
             conFoco
             etiqueta={esTercero ? `Monto total (lo que pagó ${fijoElegido?.paga_tercero})` : 'Monto'}
@@ -501,8 +525,20 @@ function NuevoGastoForm() {
             </datalist>
           </div>
 
+          <div className="lg:col-span-2">
+            <Descuento
+              activo={conDescuento}
+              onActivo={setConDescuento}
+              pct={descuentoPct}
+              onPct={setDescuentoPct}
+              tope={topeReintegro}
+              onTope={setTopeReintegro}
+              bruto={montoNum}
+            />
+          </div>
+
           {esTercero && fijoElegido?.paga_tercero ? (
-            <div className="rounded-lg bg-birome-suave p-3 text-sm">
+            <div className="rounded-lg bg-birome-suave p-3 text-sm lg:col-span-2">
               <p>
                 Lo paga <span className="font-semibold">{fijoElegido.paga_tercero}</span>. Acá
                 se anota la mitad de {yo?.nombre ?? 'quien carga'} —{' '}
@@ -543,7 +579,7 @@ function NuevoGastoForm() {
           )}
 
           {!esTercero && (
-            <div>
+            <div className="lg:col-span-2">
               <p className="mb-1 text-sm font-medium">Categoría</p>
               <div className="flex flex-wrap gap-2">
                 {CATEGORIAS.map((c) => (
@@ -592,7 +628,7 @@ function NuevoGastoForm() {
             onChange={setFecha}
           />
 
-          <button className="btn btn-primario" disabled={guardando || ok}>
+          <button className="btn btn-primario lg:self-end" disabled={guardando || ok}>
             {ok
               ? 'Anotado ✓'
               : guardando
@@ -603,11 +639,11 @@ function NuevoGastoForm() {
                     ? 'Anotar en lo tuyo 🔒'
                     : 'Anotar en la libreta'}
           </button>
-          {error && <p className="text-sm text-rojo">{error}</p>}
+          {error && <p className="text-sm text-rojo lg:col-span-2">{error}</p>}
         </form>
       ) : (
         /* ===================== PLATA ENTRE NOSOTROS ===================== */
-        <form onSubmit={guardar} className="card grid gap-4 p-5">
+        <form onSubmit={guardar} className="card grid gap-4 p-5 lg:grid-cols-2 lg:gap-x-6">
           <SelectorPersona
             etiqueta="¿Quién puso la plata?"
             perfiles={perfiles}
@@ -643,7 +679,7 @@ function NuevoGastoForm() {
 
           <CampoFecha valor={fecha} onChange={setFecha} />
 
-          <p className="rounded-lg bg-birome-suave p-3 text-xs text-tinta-suave">
+          <p className="rounded-lg bg-birome-suave p-3 text-xs text-tinta-suave lg:col-span-2">
             Va directo al saldo del mes, sin contar como gasto:{' '}
             {pagadoPor && pagadoPor !== userId ? (
               <>
@@ -658,10 +694,10 @@ function NuevoGastoForm() {
             Sirve para préstamos y para devolver de a poco.
           </p>
 
-          <button className="btn btn-primario" disabled={guardando || ok}>
+          <button className="btn btn-primario lg:col-span-2" disabled={guardando || ok}>
             {ok ? 'Anotado ✓' : guardando ? 'Anotando…' : 'Anotar en el saldo'}
           </button>
-          {error && <p className="text-sm text-rojo">{error}</p>}
+          {error && <p className="text-sm text-rojo lg:col-span-2">{error}</p>}
         </form>
       )}
       <Nav />

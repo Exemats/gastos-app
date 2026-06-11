@@ -38,6 +38,8 @@ export default function ResumenPage() {
 
   const [mes, setMes] = useState(hoyISO().slice(0, 7))
   const [filtro, setFiltro] = useState<Filtro>('todos')
+  const [filtroCat, setFiltroCat] = useState('')
+  const [filtroPagador, setFiltroPagador] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [borrando, setBorrando] = useState<string | null>(null)
   const [editando, setEditando] = useState<string | null>(null)
@@ -212,18 +214,29 @@ export default function ResumenPage() {
   }, [movs, anio])
 
   // --- lista filtrable + búsqueda ---
+  const categoriaDe = (m: Movimiento) =>
+    m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
+
+  // categorías presentes en el mes (para el filtro)
+  const categoriasDelMes = useMemo(
+    () => [...new Set(movsMes.map(categoriaDe))].sort((a, b) => a.localeCompare(b)),
+    [movsMes]
+  )
+
   const visibles = useMemo(() => {
     const q = sinAcentos(busqueda.trim())
     return movsMes.filter((m) => {
       if (filtro === 'mios' && !m.es_personal) return false
       if (filtro === 'compartidos' && m.es_personal) return false
+      if (filtroCat && categoriaDe(m) !== filtroCat) return false
+      if (filtroPagador && m.pagado_por !== filtroPagador) return false
       if (!q) return true
       return (
         sinAcentos(m.descripcion).includes(q) ||
         sinAcentos(m.categoria ?? '').includes(q)
       )
     })
-  }, [movsMes, filtro, busqueda])
+  }, [movsMes, filtro, filtroCat, filtroPagador, busqueda])
   const totalVisibles = visibles
     .filter((m) => m.categoria !== 'ajuste')
     .reduce((a, m) => a + Number(m.monto), 0)
@@ -768,7 +781,7 @@ export default function ResumenPage() {
                 </div>
               </div>
               <div className="mb-3 grid gap-2">
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {(
                     [
                       ['todos', 'Todos'],
@@ -786,6 +799,33 @@ export default function ResumenPage() {
                       {etiqueta}
                     </button>
                   ))}
+                  {/* quién pagó: tocar de nuevo lo destilda */}
+                  {perfiles.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="chip"
+                      data-activo={filtroPagador === p.id}
+                      onClick={() =>
+                        setFiltroPagador(filtroPagador === p.id ? '' : p.id)
+                      }
+                    >
+                      pagó {p.nombre}
+                    </button>
+                  ))}
+                  <select
+                    className="input !w-auto !py-1.5 !text-sm"
+                    aria-label="Filtrar por categoría"
+                    value={filtroCat}
+                    onChange={(e) => setFiltroCat(e.target.value)}
+                  >
+                    <option value="">todas las categorías</option>
+                    {categoriasDelMes.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <input
                   className="input !py-2 !text-sm"
