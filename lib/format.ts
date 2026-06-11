@@ -62,6 +62,13 @@ export function hoyArgentina() {
   }).format(new Date())
 }
 
+/** "65/35" — las partes de los dos, siempre la mayor primero. */
+export function etiquetaPartes(perfiles: { porcentaje: number }[]) {
+  if (perfiles.length !== 2) return 'según sus partes'
+  const [a, b] = [...perfiles].sort((x, y) => y.porcentaje - x.porcentaje)
+  return `${Math.round(a.porcentaje * 100)}/${Math.round(b.porcentaje * 100)}`
+}
+
 /** Suma/resta meses a un 'YYYY-MM'. */
 export function mesShift(yyyyMm: string, delta: number) {
   const [y, m] = yyyyMm.split('-').map(Number)

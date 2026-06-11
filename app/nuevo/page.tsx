@@ -3,10 +3,10 @@ import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { CATEGORIAS, type GastoFijo, type Profile } from '@/lib/types'
-import { hoyISO, nombreMes, plata } from '@/lib/format'
+import { etiquetaPartes, hoyISO, nombreMes, plata } from '@/lib/format'
 import { parsearGasto, parsearMonto, sinAcentos, coincideNombre } from '@/lib/parsear-gasto'
+import { guardarGasto, parteTercero } from '@/lib/guardar-gasto'
 import { errorLegible } from '@/lib/errores'
-import { avisar } from '@/lib/avisar'
 import Nav from '@/components/Nav'
 
 function ayerISO() {
@@ -156,13 +156,9 @@ function NuevoGastoForm() {
       : null
   const esTercero = Boolean(!propio && fijoElegido?.paga_tercero)
   const montoNum = parsearMonto(monto.trim()) ?? 0
-  const parteTercero = montoNum * Number(fijoElegido?.prop_tercero ?? 0.5)
+  const montoTercero = fijoElegido ? parteTercero(montoNum, fijoElegido) : 0
 
   const yo = perfiles.find((p) => p.id === userId)
-  const etiquetaPartes =
-    perfiles.length === 2
-      ? `${Math.round(perfiles[0].porcentaje * 100)}/${Math.round(perfiles[1].porcentaje * 100)}`
-      : 'según sus partes'
 
   async function guardar(e: React.FormEvent) {
     e.preventDefault()
@@ -178,64 +174,25 @@ function NuevoGastoForm() {
       return
     }
     setGuardando(true)
-
-    if (esTercero && fijoElegido?.paga_tercero) {
-      // Expensas y similares: no es un movimiento, es deuda con el tercero
-      const { data: creada, error } = await supabase
-        .from('deudas')
-        .insert({
-          descripcion: descripcion.trim(),
-          acreedor_tipo: 'externo',
-          acreedor_nombre: fijoElegido.paga_tercero,
-          deudor: userId,
-          monto_total:
-            Math.round(montoFinal * Number(fijoElegido.prop_tercero ?? 0.5) * 100) / 100,
-          cantidad_cuotas: 1,
-          fecha_primera_cuota: fecha,
-        })
-        .select('id')
-        .single()
-      setGuardando(false)
-      if (error) {
-        setError(errorLegible(error.message))
-        return
-      }
-      if (creada) avisar({ tipo: 'deuda', id: creada.id })
-      setOk(true)
-      setTimeout(() => router.push('/deudas'), 650)
-      return
-    }
-
-    const { data: creado, error } = await supabase
-      .from('movimientos')
-      .insert({
-        tipo: propio ? 'gasto_depto' : tipo,
-        fecha,
-        descripcion: descripcion.trim(),
-        monto: montoFinal,
-        pagado_por: propio ? userId : pagadoPor || userId,
-        categoria,
-        // es_personal va solo cuando hace falta: lo compartido funciona
-        // aunque la migración v2 todavía no se haya corrido
-        ...(propio
-          ? { prop_pagador: 1, es_personal: true }
-          : {
-              prop_pagador:
-                tipo === 'gasto_fijo'
-                  ? Number(fijoElegido?.prop_pagador ?? 0.5) // servicios: mitad y mitad
-                  : null, // gastos del depto: porcentaje del perfil
-            }),
-      })
-      .select('id')
-      .single()
+    const r = await guardarGasto(supabase, {
+      monto: montoFinal,
+      descripcion: descripcion.trim(),
+      categoria,
+      fecha,
+      esPersonal: propio,
+      tipo,
+      // lo personal y lo que paga un tercero corren por cuenta de quien carga
+      pagadorId: propio || esTercero ? userId ?? '' : pagadoPor || userId || '',
+      fijo: propio ? null : fijoElegido,
+    })
     setGuardando(false)
-    if (error) {
-      setError(errorLegible(error.message))
+    if (!r.ok) {
+      setError(errorLegible(r.error))
       return
     }
-    if (creado && !propio) avisar({ tipo: 'gasto', id: creado.id })
     setOk(true)
-    setTimeout(() => router.push(propio ? '/personal' : '/'), 650)
+    const destino = r.clase === 'deuda' ? '/deudas' : propio ? '/personal' : '/'
+    setTimeout(() => router.push(destino), 650)
   }
 
   return (
@@ -265,7 +222,7 @@ function NuevoGastoForm() {
           ? 'Va a tu sección Personal: no se divide y solo vos lo ves.'
           : tipo === 'gasto_fijo'
             ? 'Los servicios se dividen mitad y mitad.'
-            : `Se divide ${etiquetaPartes} según sus partes.`}
+            : `Se divide ${etiquetaPartes(perfiles)} según sus partes.`}
       </p>
 
       {tipo === 'gasto_fijo' && fijos.length > 0 && (
@@ -358,7 +315,7 @@ function NuevoGastoForm() {
             <p>
               Lo paga <span className="font-semibold">{fijoElegido.paga_tercero}</span>. Acá
               se anota la mitad de {yo?.nombre ?? 'quien carga'} —{' '}
-              <span className="num font-semibold">{plata(parteTercero)}</span> — como deuda
+              <span className="num font-semibold">{plata(montoTercero)}</span> — como deuda
               con {fijoElegido.paga_tercero}, junto a las demás.
             </p>
             <p className="mt-1 text-xs text-tinta-suave">

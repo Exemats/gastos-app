@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { CATEGORIAS, type Movimiento, type Profile } from '@/lib/types'
+import { etiquetaPartes } from '@/lib/format'
 import { parsearMonto } from '@/lib/parsear-gasto'
 import { errorLegible } from '@/lib/errores'
 
@@ -42,11 +43,6 @@ export default function EditarMovimiento({
   const [personal, setPersonal] = useState(Boolean(mov.es_personal))
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
-
-  const etiquetaPartes =
-    perfiles.length === 2
-      ? `${Math.round(perfiles[0].porcentaje * 100)}/${Math.round(perfiles[1].porcentaje * 100)}`
-      : 'según sus partes'
 
   // las categorías canónicas + la que ya tenga (ej 'ajuste')
   const categorias: string[] = [...CATEGORIAS]
@@ -164,7 +160,7 @@ export default function EditarMovimiento({
           disabled={personal}
           onChange={(e) => setDivision(e.target.value as Division)}
         >
-          <option value="partes">Según sus partes ({etiquetaPartes})</option>
+          <option value="partes">Según sus partes ({etiquetaPartes(perfiles)})</option>
           <option value="mitad">Mitad y mitad</option>
           <option value="pagador">100% de quien pagó</option>
           {division === 'custom' && (

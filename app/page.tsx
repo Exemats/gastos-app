@@ -8,6 +8,7 @@ import PerfilSetup from '@/components/PerfilSetup'
 import TacharMes from '@/components/TacharMes'
 import AvisosPush from '@/components/AvisosPush'
 import RealtimeRefresh from '@/components/RealtimeRefresh'
+import CargaRapida from '@/components/CargaRapida'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
@@ -162,6 +163,11 @@ export default async function Dashboard() {
 
       {necesitaSetup && yo && (
         <PerfilSetup perfil={yo} hayOtro={Boolean(otro)} />
+      )}
+
+      {/* Carga rápida: un renglón y Enter, sin salir del inicio */}
+      {user && perfilesOk.length > 0 && (
+        <CargaRapida userId={user.id} perfiles={perfilesOk} fijos={fijosCatalogo} />
       )}
 
       <AvisosPush />

@@ -13,6 +13,13 @@ instalable en el celular.
   plan B.
 - **Perfil automático**: al entrar por primera vez con tu mail, el perfil se
   crea ya como Mati (65%) o Vicky (35%). Sin pantallas de setup.
+- **Carga rápida en el inicio**: un renglón arriba del saldo — escribís
+  `12500 súper` (o `luz 45000`, `personal 8000 gym`, `vicky 9000 farmacia`),
+  Enter y queda anotado, con confirmación y **deshacer**. Es el mismo texto
+  libre que entiende el bot: los fijos del catálogo se detectan por nombre y
+  aplican su regla solos (Expensas anota la deuda con Seba). Con la PWA
+  fijada en el celu, cargar un gasto es abrir → un renglón → listo; si el
+  texto no se entiende, un link lleva el mismo texto al formulario completo.
 - **Cierre mensual con "tachado"**: cada gasto cuenta en el mes de su fecha.
   A principio de mes se mira cuánto dio el mes anterior, se transfiere la
   diferencia y se **tacha** ese mes (sin cargar ningún movimiento de
@@ -258,7 +265,7 @@ soporta share target de PWAs; usá el atajo.
 
 ```
 app/
-  page.tsx            dashboard (saldo, mes, personal, últimos)
+  page.tsx            dashboard (carga rápida, saldo, mes, personal, últimos)
   resumen/page.tsx    resumen mensual por persona + categorías + deudas + lista
   personal/page.tsx   sección privada de gastos personales
   nuevo/page.tsx      carga (compartido/personal, share target)
@@ -268,10 +275,11 @@ app/
   auth/callback/      canje de código, allowlist y perfil automático
   api/ingesta/        POST con token: Forms, atajos, etc.
   api/whatsapp/       webhook Meta Cloud API (texto libre + confirmación)
-components/           Nav, TacharMes, LogoutButton, PerfilSetup, SwRegister
+components/           Nav, CargaRapida, TacharMes, EditarMovimiento, …
 lib/
   auth.ts             cuentas habilitadas (allowlist + perfil por mail)
   parsear-gasto.ts    parser de texto libre ("12500 súper")
+  guardar-gasto.ts    guardado desde el navegador (carga rápida y /nuevo)
   ingesta.ts          registro de gastos desde afuera (resuelve quién pagó)
   supabase/           clientes browser/server/admin
   format.ts           plata, fechas, balance
