@@ -14,6 +14,10 @@ export type DatosGasto = {
   categoria: string | null
   fecha: string // YYYY-MM-DD
   esPersonal: boolean
+  /** Mitad y mitad elegido a mano (más allá de la regla del catálogo). */
+  mitad?: boolean
+  /** Préstamo o devolución: plata directa entre los dos, va al saldo del mes. */
+  esAjuste?: boolean
   tipo: 'gasto_depto' | 'gasto_fijo'
   /** Quién puso la plata (en los que paga un tercero: quién queda debiendo). */
   pagadorId: string
@@ -27,15 +31,18 @@ export type ResultadoGuardar =
 
 /**
  * Qué proporción del gasto corre por cuenta del pagador.
- * Respeta la semántica del catálogo: prop_pagador 0.5 = mitades,
- * null = porcentaje del perfil. Un fijo fuera del catálogo va mitades.
+ * Personal = todo suyo; "mitad" elegido a mano gana sobre el catálogo;
+ * el catálogo dice 0.5 = mitades y null = porcentaje del perfil;
+ * un fijo fuera del catálogo va mitades.
  */
 export function propPagador(g: {
   esPersonal: boolean
   tipo: 'gasto_depto' | 'gasto_fijo'
   fijo?: { prop_pagador?: number | null } | null
+  mitad?: boolean
 }): number | null {
   if (g.esPersonal) return 1
+  if (g.mitad) return 0.5
   if (g.tipo !== 'gasto_fijo') return null
   if (!g.fijo) return 0.5
   return g.fijo.prop_pagador != null ? Number(g.fijo.prop_pagador) : null
@@ -51,6 +58,28 @@ export async function guardarGasto(
   gasto: DatosGasto
 ): Promise<ResultadoGuardar> {
   const fijo = gasto.fijo ?? null
+
+  // Préstamo o devolución: plata directa entre los dos. prop_pagador = 0
+  // (todo lo puesto es "de más") y categoría 'ajuste': cuenta en el neto
+  // del mes pero no como gasto.
+  if (gasto.esAjuste) {
+    const { data, error } = await supabase
+      .from('movimientos')
+      .insert({
+        tipo: 'gasto_depto',
+        fecha: gasto.fecha,
+        descripcion: gasto.descripcion,
+        monto: gasto.monto,
+        pagado_por: gasto.pagadorId,
+        categoria: 'ajuste',
+        prop_pagador: 0,
+      })
+      .select('id')
+      .single()
+    if (error) return { ok: false, error: error.message }
+    avisar({ tipo: 'gasto', id: data.id })
+    return { ok: true, clase: 'movimiento', id: data.id }
+  }
 
   // Lo paga un tercero (Expensas → Seba): no es un movimiento, es deuda
   if (!gasto.esPersonal && fijo?.paga_tercero) {

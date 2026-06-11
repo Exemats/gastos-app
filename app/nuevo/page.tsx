@@ -4,7 +4,13 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { CATEGORIAS, type GastoFijo, type Profile } from '@/lib/types'
 import { etiquetaPartes, hoyISO, nombreMes, plata } from '@/lib/format'
-import { parsearGasto, parsearMonto, sinAcentos, coincideNombre } from '@/lib/parsear-gasto'
+import {
+  parsearGasto,
+  parsearMonto,
+  sinAcentos,
+  coincideNombre,
+  categoriaSugerida,
+} from '@/lib/parsear-gasto'
 import { guardarGasto, parteTercero } from '@/lib/guardar-gasto'
 import { errorLegible } from '@/lib/errores'
 import Nav from '@/components/Nav'
@@ -16,12 +22,160 @@ function ayerISO() {
   return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10)
 }
 
+type Modo = 'gasto' | 'plata'
+type Division = 'partes' | 'mitad' | 'personal'
+
 type Frecuente = {
   descripcion: string
   monto: number
   categoria: string | null
   esPersonal: boolean
 }
+
+/* ------------------------------------------------------------------ */
+/* Bloques reutilizables del formulario                                 */
+/* ------------------------------------------------------------------ */
+
+function ChipsOpciones<T extends string>({
+  opciones,
+  valor,
+  onChange,
+  enGrilla = false,
+}: {
+  opciones: { id: T; etiqueta: string; deshabilitado?: boolean }[]
+  valor: T | null
+  onChange: (v: T) => void
+  enGrilla?: boolean
+}) {
+  return (
+    <div className={enGrilla ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap gap-2'}>
+      {opciones.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          className={`chip ${enGrilla ? 'text-center' : ''}`}
+          data-activo={valor === o.id}
+          disabled={o.deshabilitado}
+          onClick={() => onChange(o.id)}
+        >
+          {o.etiqueta}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function CampoMonto({
+  etiqueta = 'Monto',
+  valor,
+  onChange,
+  conFoco = false,
+}: {
+  etiqueta?: string
+  valor: string
+  onChange: (v: string) => void
+  conFoco?: boolean
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-medium" htmlFor="monto">
+        {etiqueta}
+      </label>
+      <div className="relative">
+        <span className="num absolute left-3 top-1/2 -translate-y-1/2 text-lg text-tinta-suave">
+          $
+        </span>
+        <input
+          id="monto"
+          className="input num !pl-8 !text-2xl"
+          inputMode="decimal"
+          placeholder="0"
+          autoFocus={conFoco}
+          value={valor}
+          onChange={(e) => onChange(e.target.value.replace(/[^\d.,]/g, ''))}
+        />
+      </div>
+    </div>
+  )
+}
+
+function CampoFecha({
+  etiqueta = 'Fecha',
+  valor,
+  onChange,
+}: {
+  etiqueta?: string
+  valor: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <label className="block text-sm font-medium" htmlFor="fecha">
+          {etiqueta}
+        </label>
+        <span className="flex gap-1.5">
+          <button
+            type="button"
+            className="chip !px-2.5 !py-1 !text-xs"
+            data-activo={valor === hoyISO()}
+            onClick={() => onChange(hoyISO())}
+          >
+            Hoy
+          </button>
+          <button
+            type="button"
+            className="chip !px-2.5 !py-1 !text-xs"
+            data-activo={valor === ayerISO()}
+            onClick={() => onChange(ayerISO())}
+          >
+            Ayer
+          </button>
+        </span>
+      </div>
+      <input
+        id="fecha"
+        type="date"
+        className="input"
+        value={valor}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  )
+}
+
+function SelectorPersona({
+  etiqueta,
+  perfiles,
+  userId,
+  valor,
+  onChange,
+}: {
+  etiqueta: string
+  perfiles: Profile[]
+  userId: string | null
+  valor: string
+  onChange: (id: string) => void
+}) {
+  return (
+    <div>
+      <p className="mb-1 text-sm font-medium">{etiqueta}</p>
+      <ChipsOpciones
+        enGrilla
+        opciones={perfiles.map((p) => ({
+          id: p.id,
+          etiqueta: p.nombre + (p.id === userId ? ' (vos)' : ''),
+        }))}
+        valor={valor}
+        onChange={onChange}
+      />
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* La pantalla                                                          */
+/* ------------------------------------------------------------------ */
 
 function NuevoGastoForm() {
   const router = useRouter()
@@ -34,14 +188,18 @@ function NuevoGastoForm() {
   const [frecuentes, setFrecuentes] = useState<Frecuente[]>([])
   const [userId, setUserId] = useState<string | null>(null)
 
-  const [tipo, setTipo] = useState<'gasto_depto' | 'gasto_fijo'>('gasto_depto')
+  const [modo, setModo] = useState<Modo>('gasto')
   const [monto, setMonto] = useState('')
   const [descripcion, setDescripcion] = useState('')
   const [fecha, setFecha] = useState(hoyISO())
+  // gasto: quién lo pagó · plata: quién puso la plata
   const [pagadoPor, setPagadoPor] = useState('')
+  const [division, setDivision] = useState<Division>(
+    params.get('ambito') === 'personal' ? 'personal' : 'partes'
+  )
   const [categoria, setCategoria] = useState<string | null>(null)
-  // "100% propio, sin dividir": va directo a tu sección Personal
-  const [propio, setPropio] = useState(params.get('ambito') === 'personal')
+  // true = la eligió a mano (o vino de un frecuente): no se pisa al tipear
+  const [categoriaManual, setCategoriaManual] = useState(false)
 
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
@@ -104,7 +262,6 @@ function NuevoGastoForm() {
         ? fijosOk.find((x) => sinAcentos(x.nombre) === sinAcentos(fijoParam))
         : null
       if (fijoPedido) {
-        setTipo('gasto_fijo')
         elegirFijo(fijoPedido)
         return
       }
@@ -113,18 +270,23 @@ function NuevoGastoForm() {
       const texto = params.get('texto') || params.get('titulo')
       if (texto) {
         const r = parsearGasto(texto, perfilesOk.map((x) => x.nombre))
-        if (r.ok) {
-          setMonto(String(r.gasto.monto))
-          setDescripcion(r.gasto.descripcion)
-          setCategoria(r.gasto.categoria)
-          if (r.gasto.esPersonal) setPropio(true)
-          if (r.gasto.tipo === 'gasto_fijo') setTipo('gasto_fijo')
-          const nombrado = r.gasto.pagadorNombre
-            ? perfilesOk.find((x) => x.nombre === r.gasto.pagadorNombre)
-            : null
-          if (nombrado) setPagadoPor(nombrado.id)
-        } else {
+        if (!r.ok) {
           setDescripcion(texto)
+          return
+        }
+        const g = r.gasto
+        setMonto(String(g.monto))
+        setDescripcion(g.descripcion)
+        const nombrado = g.pagadorNombre
+          ? perfilesOk.find((x) => x.nombre === g.pagadorNombre)
+          : null
+        if (nombrado) setPagadoPor(nombrado.id)
+        if (g.esAjuste) {
+          setModo('plata')
+        } else {
+          setCategoria(g.categoria)
+          if (g.categoria) setCategoriaManual(true)
+          setDivision(g.esPersonal ? 'personal' : g.esMitad ? 'mitad' : 'partes')
         }
       }
     }
@@ -132,33 +294,65 @@ function NuevoGastoForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  function cambiarDescripcion(v: string) {
+    setDescripcion(v)
+    // categoría sugerida por la descripción ("uber" → transporte),
+    // solo mientras no haya una elegida a mano
+    if (!categoriaManual) setCategoria(categoriaSugerida(v))
+  }
+
   function elegirFijo(f: GastoFijo) {
+    setModo('gasto')
     // los que paga un tercero (Expensas) llevan el mes en la descripción
     setDescripcion(
       f.paga_tercero ? `${f.nombre} ${nombreMes(hoyISO().slice(0, 7))}` : f.nombre
     )
     if (f.monto_estimado) setMonto(String(f.monto_estimado))
     setCategoria('servicios')
-    setPropio(false)
+    setCategoriaManual(true)
+    if (division === 'personal') setDivision('partes') // la regla la pone el catálogo
   }
 
   function elegirFrecuente(fr: Frecuente) {
     setDescripcion(fr.descripcion)
     setMonto(String(fr.monto))
     setCategoria(fr.categoria)
-    setPropio(fr.esPersonal)
+    setCategoriaManual(Boolean(fr.categoria))
+    setDivision(fr.esPersonal ? 'personal' : 'partes')
   }
 
-  // el fijo elegido se deriva de la descripción (así no queda colgado si la editan)
+  const yo = perfiles.find((p) => p.id === userId)
+  const otro = perfiles.find((p) => p.id !== userId)
+
+  // el fijo se detecta solo por la descripción y aplica su regla del catálogo
   const fijoElegido =
-    tipo === 'gasto_fijo'
+    modo === 'gasto' && division !== 'personal'
       ? fijos.find((f) => coincideNombre(descripcion, f.nombre)) ?? null
       : null
-  const esTercero = Boolean(!propio && fijoElegido?.paga_tercero)
+  const esTercero = Boolean(fijoElegido?.paga_tercero)
   const montoNum = parsearMonto(monto.trim()) ?? 0
   const montoTercero = fijoElegido ? parteTercero(montoNum, fijoElegido) : 0
 
-  const yo = perfiles.find((p) => p.id === userId)
+  const reglaFijo = !fijoElegido
+    ? null
+    : fijoElegido.paga_tercero
+      ? null // el caso tercero tiene su propio recuadro
+      : fijoElegido.prop_pagador != null
+        ? Number(fijoElegido.prop_pagador) === 0.5
+          ? 'mitad y mitad'
+          : `${Math.round(Number(fijoElegido.prop_pagador) * 100)}% de quien paga`
+        : `${etiquetaPartes(perfiles)} según sus partes`
+
+  const DIVISIONES: { id: Division; etiqueta: string }[] = [
+    { id: 'partes', etiqueta: etiquetaPartes(perfiles) },
+    { id: 'mitad', etiqueta: 'Mitad y mitad' },
+    { id: 'personal', etiqueta: 'Personal 🔒' },
+  ]
+  const NOTAS_DIVISION: Record<Division, string> = {
+    partes: 'La regla general del depto: cada uno su parte.',
+    mitad: 'Partes iguales, sin importar quién pagó.',
+    personal: 'No se divide, no toca el saldo y solo vos lo ves.',
+  }
 
   async function guardar(e: React.FormEvent) {
     e.preventDefault()
@@ -169,81 +363,79 @@ function NuevoGastoForm() {
       setError('Poné un monto mayor a cero.')
       return
     }
-    if (!descripcion.trim()) {
-      setError('Falta la descripción.')
-      return
-    }
+
     setGuardando(true)
-    const r = await guardarGasto(supabase, {
-      monto: montoFinal,
-      descripcion: descripcion.trim(),
-      categoria,
-      fecha,
-      esPersonal: propio,
-      tipo,
-      // lo personal y lo que paga un tercero corren por cuenta de quien carga
-      pagadorId: propio || esTercero ? userId ?? '' : pagadoPor || userId || '',
-      fijo: propio ? null : fijoElegido,
-    })
+    let r
+    if (modo === 'plata') {
+      r = await guardarGasto(supabase, {
+        monto: montoFinal,
+        descripcion: descripcion.trim() || 'Préstamo',
+        categoria: null,
+        fecha,
+        esPersonal: false,
+        esAjuste: true,
+        tipo: 'gasto_depto',
+        pagadorId: pagadoPor || userId || '',
+      })
+    } else {
+      if (!descripcion.trim()) {
+        setGuardando(false)
+        setError('Falta la descripción.')
+        return
+      }
+      const personal = division === 'personal'
+      r = await guardarGasto(supabase, {
+        monto: montoFinal,
+        descripcion: descripcion.trim(),
+        categoria,
+        fecha,
+        esPersonal: personal,
+        // el fijo manda su regla; "mitad" solo cuando se eligió a mano
+        mitad: !fijoElegido && division === 'mitad',
+        tipo: fijoElegido ? 'gasto_fijo' : 'gasto_depto',
+        // lo personal y lo que paga un tercero corren por cuenta de quien carga
+        pagadorId: personal || esTercero ? userId ?? '' : pagadoPor || userId || '',
+        fijo: fijoElegido,
+      })
+    }
     setGuardando(false)
     if (!r.ok) {
       setError(errorLegible(r.error))
       return
     }
     setOk(true)
-    const destino = r.clase === 'deuda' ? '/deudas' : propio ? '/personal' : '/'
+    const destino =
+      r.clase === 'deuda' ? '/deudas' : division === 'personal' && modo === 'gasto' ? '/personal' : '/'
     setTimeout(() => router.push(destino), 650)
   }
 
   return (
     <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-lg">
-      <h1 className="mb-4 text-2xl">Cargar un gasto</h1>
+      <h1 className="mb-4 text-2xl">Cargar</h1>
 
-      <div className="mb-2 grid grid-cols-2 gap-2">
+      {/* Qué se anota: un gasto, o plata que se prestaron/devolvieron */}
+      <div className="mb-3 grid grid-cols-2 gap-2">
         <button
           type="button"
           className="chip text-center"
-          data-activo={tipo === 'gasto_depto'}
-          onClick={() => setTipo('gasto_depto')}
+          data-activo={modo === 'gasto'}
+          onClick={() => setModo('gasto')}
         >
-          Gasto del depto
+          Gasto
         </button>
         <button
           type="button"
           className="chip text-center"
-          data-activo={tipo === 'gasto_fijo'}
-          onClick={() => setTipo('gasto_fijo')}
+          data-activo={modo === 'plata'}
+          disabled={!otro}
+          onClick={() => setModo('plata')}
         >
-          Servicio / fijo
+          Plata entre nosotros
         </button>
       </div>
-      <p className="mb-3 text-xs text-tinta-suave">
-        {propio
-          ? 'Va a tu sección Personal: no se divide y solo vos lo ves.'
-          : tipo === 'gasto_fijo'
-            ? 'Los servicios se dividen mitad y mitad.'
-            : `Se divide ${etiquetaPartes(perfiles)} según sus partes.`}
-      </p>
 
-      {tipo === 'gasto_fijo' && fijos.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          {fijos.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              className="chip"
-              data-activo={fijoElegido?.id === f.id}
-              onClick={() => elegirFijo(f)}
-            >
-              {f.nombre}
-              {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {tipo === 'gasto_depto' && frecuentes.length > 0 && (
-        <div className="mb-4">
+      {modo === 'gasto' && frecuentes.length > 0 && (
+        <div className="mb-3">
           <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-tinta-suave">
             Frecuentes
           </p>
@@ -264,168 +456,208 @@ function NuevoGastoForm() {
         </div>
       )}
 
-      <form onSubmit={guardar} className="card grid gap-4 p-5">
-        <div>
-          <label className="mb-1 block text-sm font-medium" htmlFor="monto">
-            {esTercero ? `Monto total (lo que pagó ${fijoElegido?.paga_tercero})` : 'Monto'}
-          </label>
-          <div className="relative">
-            <span className="num absolute left-3 top-1/2 -translate-y-1/2 text-lg text-tinta-suave">
-              $
-            </span>
-            <input
-              id="monto"
-              className="input num !pl-8 !text-2xl"
-              inputMode="decimal"
-              placeholder="0"
-              autoFocus
-              value={monto}
-              onChange={(e) => setMonto(e.target.value.replace(/[^\d.,]/g, ''))}
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium" htmlFor="desc">
-            Descripción
-          </label>
-          <input
-            id="desc"
-            className="input"
-            list="sugerencias-desc"
-            placeholder={
-              propio
-                ? 'Gym, ropa, regalo para mamá…'
-                : tipo === 'gasto_fijo'
-                  ? 'Luz, gas, internet…'
-                  : 'Súper, salida, farmacia…'
-            }
-            value={descripcion}
-            onChange={(e) => setDescripcion(e.target.value)}
-          />
-          <datalist id="sugerencias-desc">
-            {sugerencias.map((s) => (
-              <option key={s} value={s} />
+      {modo === 'gasto' && fijos.length > 0 && (
+        <div className="mb-4">
+          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-tinta-suave">
+            Fijos del mes
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {fijos.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className="chip !text-[13px]"
+                data-activo={fijoElegido?.id === f.id}
+                onClick={() => elegirFijo(f)}
+              >
+                {f.nombre}
+                {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
+              </button>
             ))}
-          </datalist>
-        </div>
-
-        {esTercero && fijoElegido?.paga_tercero ? (
-          <div className="rounded-lg bg-birome-suave p-3 text-sm">
-            <p>
-              Lo paga <span className="font-semibold">{fijoElegido.paga_tercero}</span>. Acá
-              se anota la mitad de {yo?.nombre ?? 'quien carga'} —{' '}
-              <span className="num font-semibold">{plata(montoTercero)}</span> — como deuda
-              con {fijoElegido.paga_tercero}, junto a las demás.
-            </p>
-            <p className="mt-1 text-xs text-tinta-suave">
-              Cuando se la pagues, la tachás en Cuotas (&quot;Pagué una cuota&quot;).
-            </p>
           </div>
-        ) : (
-          !propio && (
+        </div>
+      )}
+
+      {modo === 'gasto' ? (
+        /* ============================ GASTO ============================ */
+        <form onSubmit={guardar} className="card grid gap-4 p-5">
+          <CampoMonto
+            conFoco
+            etiqueta={esTercero ? `Monto total (lo que pagó ${fijoElegido?.paga_tercero})` : 'Monto'}
+            valor={monto}
+            onChange={setMonto}
+          />
+
+          <div>
+            <label className="mb-1 block text-sm font-medium" htmlFor="desc">
+              Descripción
+            </label>
+            <input
+              id="desc"
+              className="input"
+              list="sugerencias-desc"
+              placeholder={
+                division === 'personal'
+                  ? 'Gym, ropa, regalo para mamá…'
+                  : 'Súper, luz, salida, farmacia…'
+              }
+              value={descripcion}
+              onChange={(e) => cambiarDescripcion(e.target.value)}
+            />
+            <datalist id="sugerencias-desc">
+              {sugerencias.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+            {reglaFijo && (
+              <p className="mt-1.5 text-xs text-tinta-suave">
+                «{fijoElegido?.nombre}» es un fijo del catálogo: se divide{' '}
+                <span className="font-medium text-tinta">{reglaFijo}</span>.
+              </p>
+            )}
+          </div>
+
+          {esTercero && fijoElegido?.paga_tercero ? (
+            <div className="rounded-lg bg-birome-suave p-3 text-sm">
+              <p>
+                Lo paga <span className="font-semibold">{fijoElegido.paga_tercero}</span>. Acá
+                se anota la mitad de {yo?.nombre ?? 'quien carga'} —{' '}
+                <span className="num font-semibold">{plata(montoTercero)}</span> — como deuda
+                con {fijoElegido.paga_tercero}, junto a las demás.
+              </p>
+              <p className="mt-1 text-xs text-tinta-suave">
+                Cuando se la pagues, la tachás en Cuotas (&quot;Pagué una cuota&quot;).
+              </p>
+            </div>
+          ) : (
+            <>
+              {division !== 'personal' && (
+                <SelectorPersona
+                  etiqueta="¿Quién lo pagó?"
+                  perfiles={perfiles}
+                  userId={userId}
+                  valor={pagadoPor}
+                  onChange={setPagadoPor}
+                />
+              )}
+
+              {!fijoElegido && (
+                <div>
+                  <p className="mb-1 text-sm font-medium">¿Cómo se divide?</p>
+                  <ChipsOpciones
+                    opciones={DIVISIONES}
+                    valor={division}
+                    onChange={setDivision}
+                  />
+                  <p className="mt-1.5 text-xs text-tinta-suave">
+                    {NOTAS_DIVISION[division]}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
+          {!esTercero && (
             <div>
-              <p className="mb-1 text-sm font-medium">¿Quién lo pagó?</p>
-              <div className="grid grid-cols-2 gap-2">
-                {perfiles.map((p) => (
+              <p className="mb-1 text-sm font-medium">Categoría (opcional)</p>
+              <div className="flex flex-wrap gap-2">
+                {CATEGORIAS.map((c) => (
                   <button
-                    key={p.id}
+                    key={c}
                     type="button"
-                    className="chip text-center"
-                    data-activo={pagadoPor === p.id}
-                    onClick={() => setPagadoPor(p.id)}
+                    className="chip"
+                    data-activo={categoria === c}
+                    onClick={() => {
+                      const limpiar = categoria === c
+                      setCategoria(limpiar ? null : c)
+                      setCategoriaManual(!limpiar)
+                    }}
                   >
-                    {p.nombre}
-                    {p.id === userId ? ' (vos)' : ''}
+                    {c}
                   </button>
                 ))}
               </div>
             </div>
-          )
-        )}
+          )}
 
-        {!esTercero && (
+          <CampoFecha
+            etiqueta={esTercero ? 'Fecha (primera y única cuota)' : 'Fecha'}
+            valor={fecha}
+            onChange={setFecha}
+          />
+
+          <button className="btn btn-primario" disabled={guardando || ok}>
+            {ok
+              ? 'Anotado ✓'
+              : guardando
+                ? 'Anotando…'
+                : esTercero
+                  ? `Anotar deuda con ${fijoElegido?.paga_tercero}`
+                  : division === 'personal'
+                    ? 'Anotar en lo tuyo 🔒'
+                    : 'Anotar en la libreta'}
+          </button>
+          {error && <p className="text-sm text-rojo">{error}</p>}
+        </form>
+      ) : (
+        /* ===================== PLATA ENTRE NOSOTROS ===================== */
+        <form onSubmit={guardar} className="card grid gap-4 p-5">
+          <SelectorPersona
+            etiqueta="¿Quién puso la plata?"
+            perfiles={perfiles}
+            userId={userId}
+            valor={pagadoPor}
+            onChange={setPagadoPor}
+          />
+
+          <CampoMonto valor={monto} onChange={setMonto} />
+
           <div>
-            <p className="mb-1 text-sm font-medium">Categoría (opcional)</p>
-            <div className="flex flex-wrap gap-2">
-              {CATEGORIAS.map((c) => (
+            <p className="mb-1 text-sm font-medium">¿Qué fue?</p>
+            <div className="mb-2 flex flex-wrap gap-2">
+              {['Préstamo', 'Devolución'].map((m) => (
                 <button
-                  key={c}
+                  key={m}
                   type="button"
                   className="chip"
-                  data-activo={categoria === c}
-                  onClick={() => setCategoria(categoria === c ? null : c)}
+                  data-activo={descripcion === m}
+                  onClick={() => setDescripcion(m)}
                 >
-                  {c}
+                  {m}
                 </button>
               ))}
             </div>
-          </div>
-        )}
-
-        <div>
-          <div className="mb-1 flex items-center justify-between">
-            <label className="block text-sm font-medium" htmlFor="fecha">
-              {esTercero ? 'Fecha (primera y única cuota)' : 'Fecha'}
-            </label>
-            <span className="flex gap-1.5">
-              <button
-                type="button"
-                className="chip !px-2.5 !py-1 !text-xs"
-                data-activo={fecha === hoyISO()}
-                onClick={() => setFecha(hoyISO())}
-              >
-                Hoy
-              </button>
-              <button
-                type="button"
-                className="chip !px-2.5 !py-1 !text-xs"
-                data-activo={fecha === ayerISO()}
-                onClick={() => setFecha(ayerISO())}
-              >
-                Ayer
-              </button>
-            </span>
-          </div>
-          <input
-            id="fecha"
-            type="date"
-            className="input"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-          />
-        </div>
-
-        {!esTercero && (
-          <label className="flex items-start gap-2 text-sm">
             <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={propio}
-              onChange={(e) => setPropio(e.target.checked)}
+              className="input"
+              placeholder="Préstamo, devolución, lo que sea…"
+              value={descripcion}
+              onChange={(e) => setDescripcion(e.target.value)}
             />
-            <span>
-              100% propio, sin dividir 🔒{' '}
-              <span className="text-tinta-suave">
-                (va a tu sección Personal — solo vos lo ves)
-              </span>
-            </span>
-          </label>
-        )}
+          </div>
 
-        <button className="btn btn-primario" disabled={guardando || ok}>
-          {ok
-            ? 'Anotado ✓'
-            : guardando
-              ? 'Anotando…'
-              : esTercero
-                ? `Anotar deuda con ${fijoElegido?.paga_tercero}`
-                : propio
-                  ? 'Anotar en lo tuyo 🔒'
-                  : 'Anotar en la libreta'}
-        </button>
-        {error && <p className="text-sm text-rojo">{error}</p>}
-      </form>
+          <CampoFecha valor={fecha} onChange={setFecha} />
+
+          <p className="rounded-lg bg-birome-suave p-3 text-xs text-tinta-suave">
+            Va directo al saldo del mes, sin contar como gasto:{' '}
+            {pagadoPor && pagadoPor !== userId ? (
+              <>
+                queda a favor de <span className="font-medium text-tinta">{otro?.nombre}</span>.
+              </>
+            ) : (
+              <>
+                queda a tu favor — {otro?.nombre ?? 'el otro'} te debe eso más (o vos le debés
+                eso menos).
+              </>
+            )}{' '}
+            Sirve para préstamos y para devolver de a poco.
+          </p>
+
+          <button className="btn btn-primario" disabled={guardando || ok}>
+            {ok ? 'Anotado ✓' : guardando ? 'Anotando…' : 'Anotar en el saldo'}
+          </button>
+          {error && <p className="text-sm text-rojo">{error}</p>}
+        </form>
+      )}
       <Nav />
     </main>
   )

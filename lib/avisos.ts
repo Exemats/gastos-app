@@ -33,7 +33,11 @@ export async function avisarMovimiento(
 
     const otros = perfiles.filter((p) => p.id !== actorId).map((p) => p.id)
     await enviarPush(admin, otros, {
-      titulo: `${nombreDe(perfiles, actorId)} anotó un gasto`,
+      // 'ajuste' = préstamo/devolución: no es un gasto, es plata entre los dos
+      titulo:
+        mov.categoria === 'ajuste'
+          ? `${nombreDe(perfiles, actorId)} anotó plata entre ustedes`
+          : `${nombreDe(perfiles, actorId)} anotó un gasto`,
       cuerpo: `${mov.descripcion} — ${plata(Number(mov.monto))}`,
       url: '/resumen',
       tag: 'gasto-nuevo',

@@ -1,12 +1,15 @@
 import { CATEGORIAS } from './types'
 
 /**
- * Parser de texto libre para cargar gastos desde WhatsApp, atajos del celu
- * o lo que se comparta a la app. Ejemplos que entiende:
+ * Parser de texto libre para cargar gastos desde la carga rápida, WhatsApp,
+ * atajos del celu o lo que se comparta a la app. Ejemplos que entiende:
  *   "12500 súper"            -> $12.500, categoría súper, compartido
  *   "luz 45.000"             -> $45.000, gasto fijo, categoría servicios
  *   "personal 8000 gym"      -> $8.000, personal (no se divide)
  *   "vicky 9000 farmacia"    -> $9.000, pagó Vicky
+ *   "cena 20000 mitad"       -> $20.000, mitad y mitad
+ *   "presté 50000"           -> $50.000 directo al saldo (puso quien escribe)
+ *   "vicky devolvió 10000"   -> $10.000 directo al saldo (puso Vicky)
  *   "1.234,56 ferretería"    -> $1.234,56
  */
 export type GastoParseado = {
@@ -14,6 +17,10 @@ export type GastoParseado = {
   descripcion: string
   categoria: string | null
   esPersonal: boolean
+  /** Mitad y mitad pedido explícitamente ("cena 20000 mitad"). */
+  esMitad: boolean
+  /** Préstamo o devolución: plata directa entre los dos, va al saldo del mes. */
+  esAjuste: boolean
   tipo: 'gasto_depto' | 'gasto_fijo'
   pagadorNombre: string | null
 }
@@ -30,6 +37,16 @@ export const sinAcentos = (s: string) =>
 
 const PERSONAL_PALABRAS = new Set(['personal', 'mio', 'mia', 'propio', 'privado'])
 const FIJO_PALABRAS = new Set(['fijo', 'servicio'])
+const MITAD_PALABRAS = new Set(['mitad', 'mitades', '50/50'])
+// préstamos y devoluciones: plata directa entre los dos, directo al saldo
+const AJUSTE_PALABRAS = new Set([
+  'prestamo', 'preste', 'presto', 'prestada', 'prestado',
+  'devolucion', 'devolvi', 'devolvio', 'devuelvo',
+])
+// "presté a Vicky": el nombre después de la preposición RECIBE la plata
+const PREP_RECEPTOR = new Set(['a', 'al', 'para'])
+// palabras de relleno que no aportan a la descripción de un préstamo
+const MULETILLAS_AJUSTE = new Set(['a', 'al', 'para', 'le', 'me', 'te', 'de', 'que'])
 
 // sinónimo (escrito sin acentos) -> categoría canónica de CATEGORIAS
 const SINONIMOS: Record<string, (typeof CATEGORIAS)[number]> = {
@@ -123,23 +140,49 @@ export function parsearGasto(
   }
 
   const nombresNorm = new Map(nombresPerfiles.map((n) => [sinAcentos(n), n]))
+  const limpiar = (p: string) => p.replace(/[¿?¡!:;()"]/g, '')
+
+  // ¿es un préstamo/devolución? Se decide antes del loop porque cambia
+  // cómo se interpretan los nombres y las muletillas.
+  const esAjuste = palabras.some((p) => AJUSTE_PALABRAS.has(sinAcentos(limpiar(p))))
 
   let monto: number | null = null
   let esPersonal = false
+  let esMitad = false
   let tipo: 'gasto_depto' | 'gasto_fijo' = 'gasto_depto'
   let categoria: string | null = null
   let pagadorNombre: string | null = null
+  let triggerAjuste = ''
+  let recibeYo = false // "me devolvió": el que escribe recibe
+  let anterior = ''
   const restantes: string[] = []
 
   for (const palabra of palabras) {
-    const limpia = palabra.replace(/[¿?¡!:;()"]/g, '')
+    const limpia = limpiar(palabra)
     const norm = sinAcentos(limpia)
+    const prev = anterior
+    anterior = norm
     if (monto === null) {
       const m = parsearMonto(limpia)
       if (m !== null) {
         monto = m
         continue
       }
+    }
+    if (esAjuste && AJUSTE_PALABRAS.has(norm)) {
+      triggerAjuste = norm
+      continue
+    }
+    if (nombresNorm.has(norm)) {
+      // en un préstamo, "a Vicky" es quien RECIBE: la puso el que escribe
+      if (!(esAjuste && PREP_RECEPTOR.has(prev))) pagadorNombre = nombresNorm.get(norm)!
+      continue
+    }
+    if (esAjuste) {
+      if (norm === 'me') recibeYo = true
+      if (MULETILLAS_AJUSTE.has(norm)) continue
+      restantes.push(limpia)
+      continue
     }
     if (PERSONAL_PALABRAS.has(norm)) {
       esPersonal = true
@@ -149,8 +192,8 @@ export function parsearGasto(
       tipo = 'gasto_fijo'
       continue
     }
-    if (nombresNorm.has(norm)) {
-      pagadorNombre = nombresNorm.get(norm)!
+    if (MITAD_PALABRAS.has(norm)) {
+      esMitad = true
       continue
     }
     if (!categoria && SINONIMOS[norm]) {
@@ -169,12 +212,48 @@ export function parsearGasto(
     }
   }
 
+  const capitalizar = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+  if (esAjuste) {
+    // "me devolvió 10000" sin nombre: no se sabe quién puso la plata
+    if (recibeYo && !pagadorNombre) {
+      return {
+        ok: false,
+        error: '¿Quién puso la plata? Poné el nombre: "vicky devolvió 10000".',
+      }
+    }
+    const base = triggerAjuste.startsWith('dev') ? 'Devolución' : 'Préstamo'
+    const descripcion = capitalizar(restantes.join(' ').trim() || base)
+    return {
+      ok: true,
+      gasto: {
+        monto,
+        descripcion,
+        categoria: null,
+        esPersonal: false,
+        esMitad: false,
+        esAjuste: true,
+        tipo: 'gasto_depto',
+        pagadorNombre,
+      },
+    }
+  }
+
   let descripcion = restantes.join(' ').trim()
   if (!descripcion) descripcion = categoria ?? 'Gasto'
-  descripcion = descripcion.charAt(0).toUpperCase() + descripcion.slice(1)
+  descripcion = capitalizar(descripcion)
 
   return {
     ok: true,
-    gasto: { monto, descripcion, categoria, esPersonal, tipo, pagadorNombre },
+    gasto: { monto, descripcion, categoria, esPersonal, esMitad, esAjuste: false, tipo, pagadorNombre },
   }
+}
+
+/** Categoría sugerida a partir de la descripción ("uber al centro" → transporte). */
+export function categoriaSugerida(descripcion: string): string | null {
+  for (const palabra of descripcion.trim().split(/\s+/)) {
+    const c = SINONIMOS[sinAcentos(palabra)]
+    if (c) return c
+  }
+  return null
 }

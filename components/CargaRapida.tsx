@@ -56,9 +56,10 @@ export default function CargaRapida({
     }
 
     // fijos del catálogo: se detectan por nombre y aplican su regla solos
-    const fijo = g.esPersonal
-      ? null
-      : fijos.find((f) => coincideNombre(g.descripcion, f.nombre)) ?? null
+    const fijo =
+      g.esPersonal || g.esAjuste
+        ? null
+        : fijos.find((f) => coincideNombre(g.descripcion, f.nombre)) ?? null
     const fecha = hoyISO()
     const descripcion = fijo?.paga_tercero
       ? `${g.descripcion} ${nombreMes(fecha.slice(0, 7))}`
@@ -74,6 +75,8 @@ export default function CargaRapida({
       categoria: g.categoria,
       fecha,
       esPersonal: g.esPersonal,
+      mitad: g.esMitad,
+      esAjuste: g.esAjuste,
       tipo,
       pagadorId,
       fijo,
@@ -87,7 +90,9 @@ export default function CargaRapida({
     const mensaje =
       res.clase === 'deuda' && fijo?.paga_tercero
         ? `Anotado ✓ ${descripcion}: ${plata(parteTercero(g.monto, fijo))} como deuda con ${fijo.paga_tercero}.`
-        : `Anotado ✓ ${plata(g.monto)} — ${descripcion} (${etiquetaDivision(g.esPersonal, tipo, fijo)}, pagó ${pagador.nombre})`
+        : g.esAjuste
+          ? `Anotado ✓ ${plata(g.monto)} — ${descripcion} (directo al saldo, puso ${pagador.nombre})`
+          : `Anotado ✓ ${plata(g.monto)} — ${descripcion} (${etiquetaDivision(g.esPersonal, g.esMitad, tipo, fijo)}, pagó ${pagador.nombre})`
     setTexto('')
     setHecho({ clase: res.clase, id: res.id, mensaje })
     router.refresh()
@@ -117,7 +122,7 @@ export default function CargaRapida({
       <form onSubmit={anotar} className="flex gap-2">
         <input
           className="input !py-2.5"
-          placeholder="12500 súper · luz 45000 · personal 8000 gym"
+          placeholder="12500 súper · presté 50000 · personal 8000 gym"
           aria-label="Carga rápida: monto y descripción"
           enterKeyHint="send"
           value={texto}
@@ -164,11 +169,12 @@ export default function CargaRapida({
 
 function etiquetaDivision(
   esPersonal: boolean,
+  mitad: boolean,
   tipo: 'gasto_depto' | 'gasto_fijo',
   fijo: GastoFijo | null
 ) {
   if (esPersonal) return 'personal 🔒'
-  const prop = propPagador({ esPersonal, tipo, fijo })
+  const prop = propPagador({ esPersonal, tipo, fijo, mitad })
   if (prop == null) return 'se divide según sus partes'
   if (prop === 0.5) return 'mitad y mitad'
   return `${Math.round(prop * 100)}% del pagador`
