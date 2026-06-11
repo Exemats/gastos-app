@@ -4,6 +4,7 @@ import { registrarGasto } from '@/lib/ingesta'
 import { textoWhatsApp, botonesWhatsApp } from '@/lib/whatsapp'
 import { resumenSaldo, netoDelMes, avisarTachado } from '@/lib/avisos'
 import { sinAcentos } from '@/lib/parsear-gasto'
+import { createHmac, timingSafeEqual } from 'crypto'
 
 // GET: verificación del webhook de Meta
 export async function GET(req: NextRequest) {
@@ -19,12 +20,32 @@ export async function GET(req: NextRequest) {
   return new NextResponse('Forbidden', { status: 403 })
 }
 
+/** Valida la firma X-Hub-Signature-256 que envía Meta en cada POST. */
+async function firmaValida(req: NextRequest, rawBody: string): Promise<boolean> {
+  const secret = process.env.WHATSAPP_APP_SECRET
+  if (!secret) return true // si no está configurado, no bloqueamos
+  const signature = req.headers.get('x-hub-signature-256')
+  if (!signature) return false
+  const expected = 'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex')
+  try {
+    return timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+  } catch {
+    return false
+  }
+}
+
 const soloDigitos = (s: string) => s.replace(/\D/g, '')
 
 // POST: recibe mensajes de WhatsApp
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json()
+    const rawBody = await req.text()
+
+    if (!(await firmaValida(req, rawBody))) {
+      return new NextResponse('Unauthorized', { status: 401 })
+    }
+
+    const body = JSON.parse(rawBody)
 
     const entry = body?.entry?.[0]?.changes?.[0]?.value
     if (!entry) return NextResponse.json({ status: 'ignored' })
