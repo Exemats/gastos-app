@@ -390,6 +390,11 @@ function NuevoGastoForm() {
         setError('Falta la descripción.')
         return
       }
+      if (!categoria && !esTercero) {
+        setGuardando(false)
+        setError('Elegí una categoría — si ninguna pega, está «otros».')
+        return
+      }
       const personal = division === 'personal'
       r = await guardarGasto(supabase, {
         monto: montoFinal,
@@ -539,7 +544,7 @@ function NuevoGastoForm() {
 
           {!esTercero && (
             <div>
-              <p className="mb-1 text-sm font-medium">Categoría (opcional)</p>
+              <p className="mb-1 text-sm font-medium">Categoría</p>
               <div className="flex flex-wrap gap-2">
                 {CATEGORIAS.map((c) => (
                   <button

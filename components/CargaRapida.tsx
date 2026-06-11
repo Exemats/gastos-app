@@ -72,7 +72,8 @@ export default function CargaRapida({
     const res = await guardarGasto(supabase, {
       monto: g.monto,
       descripcion,
-      categoria: g.categoria,
+      // las categorías son obligatorias: sin pista, va a "otros"
+      categoria: g.categoria ?? (fijo ? 'servicios' : 'otros'),
       fecha,
       esPersonal: g.esPersonal,
       mitad: g.esMitad,

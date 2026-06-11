@@ -86,6 +86,12 @@ const SINONIMOS: Record<string, (typeof CATEGORIAS)[number]> = {
   hogar: 'hogar',
   casa: 'hogar',
   ferreteria: 'hogar',
+  farmacia: 'salud',
+  remedios: 'salud',
+  medico: 'salud',
+  medica: 'salud',
+  dentista: 'salud',
+  salud: 'salud',
   otros: 'otros',
 }
 

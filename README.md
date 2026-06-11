@@ -57,9 +57,11 @@ instalable en el celular.
   descripción con autocompletado, frecuentes a un tap, quién pagó y una
   sola pregunta de división — **65/35 · 50/50 · 100% propio 🔒** (lo
   propio va directo a tu sección Personal; un café 50/50 es elegir el
-  chip y listo). La categoría se sugiere sola ("uber" → transporte,
-  "café" → salidas) y **servicios despliega sus subcategorías** del
-  catálogo (Luz, Gas, Internet, Agua, ABL, Expensas): un tap precarga
+  chip y listo). La categoría es **obligatoria** pero casi nunca la
+  tocás: se sugiere sola ("uber" → transporte, "café" → salidas,
+  "farmacia" → salud) y siempre está "otros" de comodín; **servicios
+  despliega sus subcategorías** del catálogo (Luz, Gas, Internet, Agua,
+  ABL, Expensas): un tap precarga
   descripción, monto estimado y la división de la casa — que solo es una
   sugerencia, el selector siempre manda. **Expensas (Seba)** es el caso
   especial: la carga uno de los dos pero la paga Seba, así que se anota
@@ -189,9 +191,10 @@ incluye el botón **"✓ Tachar"** para saldarlo directo desde el chat.
 
 1. Creá un Form con estos campos (títulos exactos): **Monto** (respuesta
    corta), **Descripción** (corta), **Quién pagó** (opción múltiple:
-   Mati / Vicky), **Categoría** (opción múltiple, opcional: súper, salidas,
-   transporte, delivery, regalos, servicios, hogar, otros), **¿Personal?**
-   (opción múltiple: No / Sí).
+   Mati / Vicky), **Categoría** (opción múltiple, opcional: súper, delivery,
+   salidas, transporte, servicios, hogar, salud, regalos, otros), **¿Personal?**
+   (opción múltiple: No / Sí). Si la categoría falta, se deduce de la
+   descripción; si no hay pista, va a "otros".
 2. En el Form: ⋮ → **Apps Script**, pegá esto (con tu URL y tu token):
 
    ```js

@@ -56,6 +56,7 @@ export default function EditarMovimiento({
     if (!montoNum || montoNum <= 0) return setError('Poné un monto mayor a cero.')
     if (!descripcion.trim()) return setError('Falta la descripción.')
     if (!fecha) return setError('Falta la fecha.')
+    if (!categoria) return setError('Elegí una categoría — si ninguna pega, está «otros».')
 
     const prop = personal
       ? 1
@@ -127,7 +128,10 @@ export default function EditarMovimiento({
             value={categoria}
             onChange={(e) => setCategoria(e.target.value)}
           >
-            <option value="">sin categoría</option>
+            {/* los viejos sin categoría arrancan acá y eligen una al guardar */}
+            <option value="" disabled>
+              elegí una…
+            </option>
             {categorias.map((c) => (
               <option key={c} value={c}>
                 {c}

@@ -169,7 +169,8 @@ export async function registrarGasto(
       descripcion,
       monto,
       pagado_por: pagador.id,
-      categoria,
+      // las categorías son obligatorias: sin pista, va a "otros"
+      categoria: categoria ?? (tipo === 'gasto_fijo' ? 'servicios' : 'otros'),
       // es_personal va solo cuando hace falta: lo compartido funciona
       // aunque la migración v2 todavía no se haya corrido
       ...(esPersonal ? { prop_pagador: 1, es_personal: true } : { prop_pagador: prop }),
