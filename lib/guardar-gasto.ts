@@ -18,6 +18,9 @@ export type DatosGasto = {
   mitad?: boolean
   /** Préstamo o devolución: plata directa entre los dos, va al saldo del mes. */
   esAjuste?: boolean
+  /** División ya resuelta por el usuario (el formulario): tiene la última
+   * palabra. undefined = inferir de tipo/fijo/mitad. */
+  prop?: number | null
   tipo: 'gasto_depto' | 'gasto_fijo'
   /** Quién puso la plata (en los que paga un tercero: quién queda debiendo). */
   pagadorId: string
@@ -114,7 +117,10 @@ export async function guardarGasto(
       // aunque la migración v2 todavía no se haya corrido
       ...(gasto.esPersonal
         ? { prop_pagador: 1, es_personal: true }
-        : { prop_pagador: propPagador(gasto) }),
+        : {
+            prop_pagador:
+              gasto.prop !== undefined ? gasto.prop : propPagador(gasto),
+          }),
     })
     .select('id')
     .single()

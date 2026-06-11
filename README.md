@@ -54,14 +54,18 @@ instalable en el celular.
   no tocan el saldo y **el otro no los ve** — lo garantiza Row Level Security
   en la base, no solo la pantalla.
 - **Cargar (`/nuevo`)** — dos modos en una pantalla. **Gasto**: monto y
-  descripción con autocompletado, **frecuentes y fijos a un tap**, quién
-  pagó y una sola pregunta de división — **65/35 · mitad y mitad ·
-  personal 🔒** (lo personal va directo a tu sección privada). Los fijos se
-  detectan solos por la descripción y aplican su regla del catálogo
-  (Expensas muestra "lo paga Seba" y anota la deuda); la categoría se
-  sugiere sola ("uber" → transporte). **Plata entre nosotros**: préstamos
-  y devoluciones de a poco — quién puso la plata, monto y listo: va
-  directo al saldo del mes, sin contar como gasto.
+  descripción con autocompletado, frecuentes a un tap, quién pagó y una
+  sola pregunta de división — **65/35 · 50/50 · 100% propio 🔒** (lo
+  propio va directo a tu sección Personal; un café 50/50 es elegir el
+  chip y listo). La categoría se sugiere sola ("uber" → transporte,
+  "café" → salidas) y **servicios despliega sus subcategorías** del
+  catálogo (Luz, Gas, Internet, Agua, ABL, Expensas): un tap precarga
+  descripción, monto estimado y la división de la casa — que solo es una
+  sugerencia, el selector siempre manda. **Expensas (Seba)** es el caso
+  especial: la carga uno de los dos pero la paga Seba, así que se anota
+  la mitad como deuda con él, sin tocar el saldo. **Plata entre
+  nosotros**: préstamos y devoluciones de a poco — quién puso la plata,
+  monto y listo: va directo al saldo del mes, sin contar como gasto.
 - **Modo oscuro automático**: sigue la configuración del celu/compu.
 - **Tiempo real**: lo que carga, edita o tacha uno aparece al instante en el
   celu del otro, sin refrescar (Supabase Realtime, respetando RLS: los

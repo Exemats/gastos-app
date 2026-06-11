@@ -161,7 +161,7 @@ export default function EditarMovimiento({
           onChange={(e) => setDivision(e.target.value as Division)}
         >
           <option value="partes">Según sus partes ({etiquetaPartes(perfiles)})</option>
-          <option value="mitad">Mitad y mitad</option>
+          <option value="mitad">50/50</option>
           <option value="pagador">100% de quien pagó</option>
           {division === 'custom' && (
             <option value="custom">

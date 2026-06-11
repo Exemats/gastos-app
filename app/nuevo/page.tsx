@@ -197,6 +197,10 @@ function NuevoGastoForm() {
   const [division, setDivision] = useState<Division>(
     params.get('ambito') === 'personal' ? 'personal' : 'partes'
   )
+  // true = la eligió a mano: el catálogo solo sugiere, el selector manda
+  const [divisionManual, setDivisionManual] = useState(
+    params.get('ambito') === 'personal'
+  )
   const [categoria, setCategoria] = useState<string | null>(null)
   // true = la eligió a mano (o vino de un frecuente): no se pisa al tipear
   const [categoriaManual, setCategoriaManual] = useState(false)
@@ -262,7 +266,7 @@ function NuevoGastoForm() {
         ? fijosOk.find((x) => sinAcentos(x.nombre) === sinAcentos(fijoParam))
         : null
       if (fijoPedido) {
-        elegirFijo(fijoPedido)
+        elegirServicio(fijoPedido)
         return
       }
 
@@ -287,6 +291,7 @@ function NuevoGastoForm() {
           setCategoria(g.categoria)
           if (g.categoria) setCategoriaManual(true)
           setDivision(g.esPersonal ? 'personal' : g.esMitad ? 'mitad' : 'partes')
+          if (g.esPersonal || g.esMitad) setDivisionManual(true)
         }
       }
     }
@@ -299,18 +304,29 @@ function NuevoGastoForm() {
     // categoría sugerida por la descripción ("uber" → transporte),
     // solo mientras no haya una elegida a mano
     if (!categoriaManual) setCategoria(categoriaSugerida(v))
+    // si coincide con un servicio del catálogo, sugiere su división de la
+    // casa (50/50); el selector siempre puede pisarla
+    if (!divisionManual) {
+      const f = fijos.find((x) => coincideNombre(v, x.nombre))
+      setDivision(
+        f && !f.paga_tercero && Number(f.prop_pagador) === 0.5 ? 'mitad' : 'partes'
+      )
+    }
   }
 
-  function elegirFijo(f: GastoFijo) {
+  function elegirServicio(f: GastoFijo) {
     setModo('gasto')
     // los que paga un tercero (Expensas) llevan el mes en la descripción
     setDescripcion(
       f.paga_tercero ? `${f.nombre} ${nombreMes(hoyISO().slice(0, 7))}` : f.nombre
     )
-    if (f.monto_estimado) setMonto(String(f.monto_estimado))
+    if (f.monto_estimado && !monto.trim()) setMonto(String(f.monto_estimado))
     setCategoria('servicios')
     setCategoriaManual(true)
-    if (division === 'personal') setDivision('partes') // la regla la pone el catálogo
+    if (!f.paga_tercero) {
+      setDivision(Number(f.prop_pagador) === 0.5 ? 'mitad' : 'partes')
+      setDivisionManual(false) // es una sugerencia de la casa, no una elección
+    }
   }
 
   function elegirFrecuente(fr: Frecuente) {
@@ -319,6 +335,7 @@ function NuevoGastoForm() {
     setCategoria(fr.categoria)
     setCategoriaManual(Boolean(fr.categoria))
     setDivision(fr.esPersonal ? 'personal' : 'partes')
+    setDivisionManual(fr.esPersonal)
   }
 
   const yo = perfiles.find((p) => p.id === userId)
@@ -333,25 +350,15 @@ function NuevoGastoForm() {
   const montoNum = parsearMonto(monto.trim()) ?? 0
   const montoTercero = fijoElegido ? parteTercero(montoNum, fijoElegido) : 0
 
-  const reglaFijo = !fijoElegido
-    ? null
-    : fijoElegido.paga_tercero
-      ? null // el caso tercero tiene su propio recuadro
-      : fijoElegido.prop_pagador != null
-        ? Number(fijoElegido.prop_pagador) === 0.5
-          ? 'mitad y mitad'
-          : `${Math.round(Number(fijoElegido.prop_pagador) * 100)}% de quien paga`
-        : `${etiquetaPartes(perfiles)} según sus partes`
-
   const DIVISIONES: { id: Division; etiqueta: string }[] = [
     { id: 'partes', etiqueta: etiquetaPartes(perfiles) },
-    { id: 'mitad', etiqueta: 'Mitad y mitad' },
-    { id: 'personal', etiqueta: 'Personal 🔒' },
+    { id: 'mitad', etiqueta: '50/50' },
+    { id: 'personal', etiqueta: '100% propio 🔒' },
   ]
   const NOTAS_DIVISION: Record<Division, string> = {
     partes: 'La regla general del depto: cada uno su parte.',
-    mitad: 'Partes iguales, sin importar quién pagó.',
-    personal: 'No se divide, no toca el saldo y solo vos lo ves.',
+    mitad: 'Partes iguales (un café, una salida, los servicios).',
+    personal: 'No se divide, no toca el saldo y solo vos lo ves (va a Personal).',
   }
 
   async function guardar(e: React.FormEvent) {
@@ -390,8 +397,8 @@ function NuevoGastoForm() {
         categoria,
         fecha,
         esPersonal: personal,
-        // el fijo manda su regla; "mitad" solo cuando se eligió a mano
-        mitad: !fijoElegido && division === 'mitad',
+        // la división la decide el selector (el catálogo solo la sugiere)
+        prop: division === 'mitad' ? 0.5 : null,
         tipo: fijoElegido ? 'gasto_fijo' : 'gasto_depto',
         // lo personal y lo que paga un tercero corren por cuenta de quien carga
         pagadorId: personal || esTercero ? userId ?? '' : pagadoPor || userId || '',
@@ -456,28 +463,6 @@ function NuevoGastoForm() {
         </div>
       )}
 
-      {modo === 'gasto' && fijos.length > 0 && (
-        <div className="mb-4">
-          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-tinta-suave">
-            Fijos del mes
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {fijos.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                className="chip !text-[13px]"
-                data-activo={fijoElegido?.id === f.id}
-                onClick={() => elegirFijo(f)}
-              >
-                {f.nombre}
-                {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {modo === 'gasto' ? (
         /* ============================ GASTO ============================ */
         <form onSubmit={guardar} className="card grid gap-4 p-5">
@@ -509,12 +494,6 @@ function NuevoGastoForm() {
                 <option key={s} value={s} />
               ))}
             </datalist>
-            {reglaFijo && (
-              <p className="mt-1.5 text-xs text-tinta-suave">
-                «{fijoElegido?.nombre}» es un fijo del catálogo: se divide{' '}
-                <span className="font-medium text-tinta">{reglaFijo}</span>.
-              </p>
-            )}
           </div>
 
           {esTercero && fijoElegido?.paga_tercero ? (
@@ -541,19 +520,20 @@ function NuevoGastoForm() {
                 />
               )}
 
-              {!fijoElegido && (
-                <div>
-                  <p className="mb-1 text-sm font-medium">¿Cómo se divide?</p>
-                  <ChipsOpciones
-                    opciones={DIVISIONES}
-                    valor={division}
-                    onChange={setDivision}
-                  />
-                  <p className="mt-1.5 text-xs text-tinta-suave">
-                    {NOTAS_DIVISION[division]}
-                  </p>
-                </div>
-              )}
+              <div>
+                <p className="mb-1 text-sm font-medium">¿Cómo se divide?</p>
+                <ChipsOpciones
+                  opciones={DIVISIONES}
+                  valor={division}
+                  onChange={(d) => {
+                    setDivision(d)
+                    setDivisionManual(true)
+                  }}
+                />
+                <p className="mt-1.5 text-xs text-tinta-suave">
+                  {NOTAS_DIVISION[division]}
+                </p>
+              </div>
             </>
           )}
 
@@ -577,6 +557,27 @@ function NuevoGastoForm() {
                   </button>
                 ))}
               </div>
+              {/* servicios despliega las subcategorías del catálogo: un tap
+                  precarga descripción, monto estimado y la división de la casa */}
+              {categoria === 'servicios' && fijos.length > 0 && (
+                <>
+                  <p className="mb-1 mt-2 text-xs text-tinta-suave">¿Cuál?</p>
+                  <div className="flex flex-wrap gap-2">
+                    {fijos.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className="chip !text-[13px]"
+                        data-activo={fijoElegido?.id === f.id}
+                        onClick={() => elegirServicio(f)}
+                      >
+                        {f.nombre}
+                        {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
