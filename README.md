@@ -52,6 +52,13 @@ instalable en el celular.
   paga Seba" y anota la deuda). El checkbox **"100% propio, sin dividir 🔒"**
   manda el gasto directo a tu sección Personal.
 - **Modo oscuro automático**: sigue la configuración del celu/compu.
+- **Tiempo real**: lo que carga, edita o tacha uno aparece al instante en el
+  celu del otro, sin refrescar (Supabase Realtime, respetando RLS: los
+  personales del otro no viajan).
+- **Notificaciones push**: "Vicky anotó un gasto", "hoy vence la Luz y falta
+  cargarla", "📒 cerrar mayo: Vicky transfiere $52.300" (días 1, 3 y 5 hasta
+  que lo tachen) y "⚠ delivery pasó el límite". Cada uno las activa con un
+  botón en el inicio, por dispositivo.
 - **Deudas (`/deudas`)**: cuotas con progreso, "Pagué una cuota" con deshacer,
   deudas a terceros o entre ustedes.
 - **Carga sin abrir la app**: bot de WhatsApp ("12500 súper" y listo),
@@ -108,6 +115,21 @@ visita. Para que sea así, en Supabase → Authentication → Sessions dejá
 *time-box* e *inactivity timeout* desactivados (es el default). Si instalan
 la PWA, queda como una app con sesión persistente.
 
+## Tiempo real y avisos (una vez)
+
+1. La migración v2 ya deja todo listo en la base (publicación Realtime +
+   tabla `push_subs`).
+2. Generá las claves push: `npx web-push generate-vapid-keys` y cargá en
+   Vercel `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` y
+   `VAPID_SUBJECT` (un mailto). Sin esto la app anda igual, solo que sin
+   avisos.
+3. Cargá `CRON_SECRET` (cualquier secreto largo): el cron diario de
+   `vercel.json` pega a `/api/push/recordatorios` a las 10:00 de Argentina
+   para los vencimientos y el recordatorio de cierre.
+4. Cada uno toca **"Activar avisos"** en el inicio, una vez por dispositivo.
+   En iPhone hace falta tener la app instalada en la pantalla de inicio
+   (iOS 16.4+); en Android y compu anda directo.
+
 ## Cargar gastos sin abrir la app
 
 Todas las vías terminan en el mismo lugar y entienden el mismo texto libre:
@@ -137,6 +159,10 @@ Le escribís al número del bot y te contesta "Anotado ✓ …". Setup (una vez,
    update profiles set telefono = '549...' where nombre = 'Vicky';
    ```
 5. Agenden el número del bot y listo: `12500 súper` → "Anotado ✓".
+
+Comandos del bot: cualquier texto con monto carga un gasto; **"saldo"** (o
+"resumen") contesta el estado del mes y, si el mes pasado quedó sin cerrar,
+incluye el botón **"✓ Tachar"** para saldarlo directo desde el chat.
 
 > Nota: en el número de prueba de Meta hay que registrar los teléfonos de
 > ambos como destinatarios permitidos (API Setup → To). Con un número propio

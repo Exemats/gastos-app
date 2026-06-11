@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { registrarGasto } from '@/lib/ingesta'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { textoWhatsApp, botonesWhatsApp } from '@/lib/whatsapp'
+import { resumenSaldo, netoDelMes, avisarTachado } from '@/lib/avisos'
+import { sinAcentos } from '@/lib/parsear-gasto'
+import { nombreMes, nombreMesCorto, plata } from '@/lib/format'
 
 // GET: verificación del webhook de Meta
 export async function GET(req: NextRequest) {

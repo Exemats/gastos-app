@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { plata, nombreMes } from '@/lib/format'
 import { errorLegible } from '@/lib/errores'
+import { avisar } from '@/lib/avisar'
 
 /**
  * El "tachado" del cierre mensual: ya se transfirió la diferencia del mes,
@@ -48,6 +49,7 @@ export default function TacharMes({
       setError(errorLegible(error.message))
       return
     }
+    avisar({ tipo: 'tachado', mes })
     setConfirmando(false)
     if (onDone) onDone()
     else router.refresh()

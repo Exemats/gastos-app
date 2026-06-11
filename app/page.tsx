@@ -6,6 +6,8 @@ import Nav from '@/components/Nav'
 import LogoutButton from '@/components/LogoutButton'
 import PerfilSetup from '@/components/PerfilSetup'
 import TacharMes from '@/components/TacharMes'
+import AvisosPush from '@/components/AvisosPush'
+import RealtimeRefresh from '@/components/RealtimeRefresh'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
@@ -161,6 +163,9 @@ export default async function Dashboard() {
       {necesitaSetup && yo && (
         <PerfilSetup perfil={yo} hayOtro={Boolean(otro)} />
       )}
+
+      <AvisosPush />
+      <RealtimeRefresh />
 
       <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-6">
       <div>

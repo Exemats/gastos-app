@@ -5,6 +5,8 @@ import { plata, plataExacta, fechaCorta } from '@/lib/format'
 import { parsearMonto } from '@/lib/parsear-gasto'
 import type { Deuda, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
+import { useRealtime } from '@/lib/use-realtime'
+import { avisar } from '@/lib/avisar'
 
 export default function DeudasPage() {
   const supabase = createClient()
@@ -31,6 +33,7 @@ export default function DeudasPage() {
   useEffect(() => {
     cargar()
   }, [cargar])
+  useRealtime(cargar)
 
   async function pagarCuota(d: Deuda) {
     const nueva = d.cuota_actual + 1
@@ -191,7 +194,7 @@ function NuevaDeudaForm({
       return setError('Todavía no está el perfil de la otra persona.')
 
     setGuardando(true)
-    const { error } = await supabase.from('deudas').insert({
+    const { data: creada, error } = await supabase.from('deudas').insert({
       descripcion: descripcion.trim(),
       acreedor_tipo: acreedorTipo,
       acreedor_nombre: acreedorTipo === 'externo' ? acreedorNombre.trim() : null,
@@ -200,10 +203,13 @@ function NuevaDeudaForm({
       monto_total: monto,
       cantidad_cuotas: n,
       fecha_primera_cuota: primeraCuota || null,
-    })
+    }).select('id').single()
     setGuardando(false)
     if (error) setError(error.message)
-    else onCreada()
+    else {
+      if (creada) avisar({ tipo: 'deuda', id: creada.id })
+      onCreada()
+    }
   }
 
   return (
