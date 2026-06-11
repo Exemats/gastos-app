@@ -124,9 +124,20 @@ export default function DeudasPage() {
                     )}
                   </p>
                   {d.activa ? (
-                    <button className="btn btn-secundario !px-3 !py-1.5 !text-sm" onClick={() => pagarCuota(d)}>
-                      Pagué una cuota
-                    </button>
+                    <span className="flex items-center gap-2.5">
+                      {d.cuota_actual > 0 && (
+                        <button
+                          className="text-xs text-tinta-suave underline underline-offset-2"
+                          aria-label="Deshacer la última cuota pagada"
+                          onClick={() => reactivar(d)}
+                        >
+                          deshacer
+                        </button>
+                      )}
+                      <button className="btn btn-secundario !px-3 !py-1.5 !text-sm" onClick={() => pagarCuota(d)}>
+                        Pagué una cuota
+                      </button>
+                    </span>
                   ) : (
                     <button
                       className="text-xs text-tinta-suave underline"

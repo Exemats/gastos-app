@@ -7,6 +7,7 @@ import {
   coincideNombre,
 } from './parsear-gasto'
 import { hoyArgentina, nombreMes, plata } from './format'
+import { propPagador } from './guardar-gasto'
 import { avisarMovimiento, avisarDeuda } from './avisos'
 
 /**
@@ -46,6 +47,8 @@ export async function registrarGasto(
   let descripcion: string
   let categoria: string | null
   let esPersonal: boolean
+  let esMitad = false
+  let esAjuste = false
   let tipo: 'gasto_depto' | 'gasto_fijo' = 'gasto_depto'
   let nombreEnTexto: string | null = null
 
@@ -56,6 +59,8 @@ export async function registrarGasto(
     descripcion = r.gasto.descripcion
     categoria = r.gasto.categoria
     esPersonal = r.gasto.esPersonal
+    esMitad = r.gasto.esMitad
+    esAjuste = r.gasto.esAjuste
     tipo = r.gasto.tipo
     nombreEnTexto = r.gasto.pagadorNombre
   } else {
@@ -89,8 +94,32 @@ export async function registrarGasto(
     }
   }
 
-  // --- 3. reglas del catálogo de fijos (mitades, terceros como Seba) ---
   const fecha = entrada.fecha?.trim() || hoyArgentina()
+
+  // Préstamo o devolución: plata directa entre los dos, directo al saldo
+  if (esAjuste) {
+    const { data: creado, error } = await supabase
+      .from('movimientos')
+      .insert({
+        tipo: 'gasto_depto',
+        fecha,
+        descripcion,
+        monto,
+        pagado_por: pagador.id,
+        categoria: 'ajuste',
+        prop_pagador: 0,
+      })
+      .select('id')
+      .single()
+    if (error) return { ok: false, mensaje: `Error al guardar: ${error.message}` }
+    if (creado) await avisarMovimiento(supabase, creado.id, pagador.id)
+    return {
+      ok: true,
+      mensaje: `Anotado ✓ ${plata(monto)} — ${descripcion} (directo al saldo, puso ${pagador.nombre})`,
+    }
+  }
+
+  // --- 3. reglas del catálogo de fijos (mitades, terceros como Seba) ---
   let fijoCatalogo: GastoFijoCatalogo | null = null
   if (!esPersonal) {
     const { data: fijosCat } = await supabase
@@ -130,6 +159,8 @@ export async function registrarGasto(
   }
 
   // --- 4. insertar movimiento ---
+  // misma regla de división que la app (catálogo: 0.5 = mitades, null = % del perfil)
+  const prop = propPagador({ esPersonal, tipo, fijo: fijoCatalogo, mitad: esMitad })
   const { data: creado, error } = await supabase
     .from('movimientos')
     .insert({
@@ -141,14 +172,7 @@ export async function registrarGasto(
       categoria,
       // es_personal va solo cuando hace falta: lo compartido funciona
       // aunque la migración v2 todavía no se haya corrido
-      ...(esPersonal
-        ? { prop_pagador: 1, es_personal: true }
-        : {
-            prop_pagador:
-              tipo === 'gasto_fijo'
-                ? Number(fijoCatalogo?.prop_pagador ?? 0.5) // servicios: mitad y mitad
-                : null,
-          }),
+      ...(esPersonal ? { prop_pagador: 1, es_personal: true } : { prop_pagador: prop }),
     })
     .select('id')
     .single()
@@ -157,9 +181,11 @@ export async function registrarGasto(
 
   const division = esPersonal
     ? 'personal'
-    : tipo === 'gasto_fijo'
+    : prop === 0.5
       ? 'mitad y mitad'
-      : 'compartido'
+      : prop == null
+        ? 'compartido'
+        : `${Math.round(prop * 100)}% del pagador`
   return {
     ok: true,
     mensaje: `Anotado ✓ ${plata(monto)} — ${descripcion} (${division}, pagó ${pagador.nombre})`,

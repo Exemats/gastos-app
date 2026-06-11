@@ -13,6 +13,14 @@ instalable en el celular.
   plan B.
 - **Perfil automático**: al entrar por primera vez con tu mail, el perfil se
   crea ya como Mati (65%) o Vicky (35%). Sin pantallas de setup.
+- **Carga rápida en el inicio**: un renglón arriba del saldo — escribís
+  `12500 súper` (o `luz 45000`, `personal 8000 gym`, `cena 20000 mitad`,
+  `presté 50000`), Enter y queda anotado, con confirmación y **deshacer**.
+  Es el mismo texto libre que entiende el bot: los fijos del catálogo se
+  detectan por nombre y aplican su regla solos (Expensas anota la deuda con
+  Seba). Con la PWA fijada en el celu, cargar un gasto es abrir → un
+  renglón → listo; si el texto no se entiende, un link lleva el mismo texto
+  al formulario completo.
 - **Cierre mensual con "tachado"**: cada gasto cuenta en el mes de su fecha.
   A principio de mes se mira cuánto dio el mes anterior, se transfiere la
   diferencia y se **tacha** ese mes (sin cargar ningún movimiento de
@@ -45,12 +53,15 @@ instalable en el celular.
 - **Personal (`/personal`)** 🔒: gastos personales de cada uno. No se dividen,
   no tocan el saldo y **el otro no los ve** — lo garantiza Row Level Security
   en la base, no solo la pantalla.
-- **Cargar (`/nuevo`)** — una sola pantalla: monto + descripción con
-  autocompletado, **frecuentes a un tap** (lo que más repiten, con el último
-  monto), quién pagó, categorías, chips Hoy/Ayer para la fecha y catálogo de
-  fijos (cada fijo aplica su regla de división sola; Expensas muestra "lo
-  paga Seba" y anota la deuda). El checkbox **"100% propio, sin dividir 🔒"**
-  manda el gasto directo a tu sección Personal.
+- **Cargar (`/nuevo`)** — dos modos en una pantalla. **Gasto**: monto y
+  descripción con autocompletado, **frecuentes y fijos a un tap**, quién
+  pagó y una sola pregunta de división — **65/35 · mitad y mitad ·
+  personal 🔒** (lo personal va directo a tu sección privada). Los fijos se
+  detectan solos por la descripción y aplican su regla del catálogo
+  (Expensas muestra "lo paga Seba" y anota la deuda); la categoría se
+  sugiere sola ("uber" → transporte). **Plata entre nosotros**: préstamos
+  y devoluciones de a poco — quién puso la plata, monto y listo: va
+  directo al saldo del mes, sin contar como gasto.
 - **Modo oscuro automático**: sigue la configuración del celu/compu.
 - **Tiempo real**: lo que carga, edita o tacha uno aparece al instante en el
   celu del otro, sin refrescar (Supabase Realtime, respetando RLS: los
@@ -135,7 +146,9 @@ la PWA, queda como una app con sesión persistente.
 Todas las vías terminan en el mismo lugar y entienden el mismo texto libre:
 
 > `12500 súper` · `luz 45000` (lo marca como fijo) · `personal 8000 gym` ·
-> `vicky 9000 farmacia` (lo pagó Vicky) · `1.234,56 ferretería`
+> `vicky 9000 farmacia` (lo pagó Vicky) · `cena 20000 mitad` (mitad y mitad) ·
+> `presté 50000` / `vicky devolvió 10000` (directo al saldo) ·
+> `1.234,56 ferretería`
 
 ### Bot de WhatsApp (recomendado)
 
@@ -242,6 +255,11 @@ soporta share target de PWAs; usá el atajo.
   mes, el Resumen lo avisa. Los viejos "pagos de saldo" (categoría `ajuste`)
   se siguen contemplando en el neto de su mes. Deudas a terceros no entran
   al saldo: se tachan cuota a cuota en `/deudas`.
+- **Préstamos y devoluciones = movimientos `ajuste`**: prestarse plata o
+  devolver de a poco se guarda como un movimiento con `prop_pagador = 0`
+  (todo lo que se puso quedó "de más") y categoría `ajuste` — cuenta entero
+  en el neto del mes, igual que los viejos "pagos de saldo", pero no figura
+  como gasto. Cero cambios de esquema.
 - **Degradación con gracia**: si la migración v2 no se corrió, la app avisa
   con un cartel y lo básico (cargar y dividir gastos compartidos) sigue
   funcionando.
@@ -258,7 +276,7 @@ soporta share target de PWAs; usá el atajo.
 
 ```
 app/
-  page.tsx            dashboard (saldo, mes, personal, últimos)
+  page.tsx            dashboard (carga rápida, saldo, mes, personal, últimos)
   resumen/page.tsx    resumen mensual por persona + categorías + deudas + lista
   personal/page.tsx   sección privada de gastos personales
   nuevo/page.tsx      carga (compartido/personal, share target)
@@ -268,10 +286,11 @@ app/
   auth/callback/      canje de código, allowlist y perfil automático
   api/ingesta/        POST con token: Forms, atajos, etc.
   api/whatsapp/       webhook Meta Cloud API (texto libre + confirmación)
-components/           Nav, TacharMes, LogoutButton, PerfilSetup, SwRegister
+components/           Nav, CargaRapida, TacharMes, EditarMovimiento, …
 lib/
   auth.ts             cuentas habilitadas (allowlist + perfil por mail)
   parsear-gasto.ts    parser de texto libre ("12500 súper")
+  guardar-gasto.ts    guardado desde el navegador (carga rápida y /nuevo)
   ingesta.ts          registro de gastos desde afuera (resuelve quién pagó)
   supabase/           clientes browser/server/admin
   format.ts           plata, fechas, balance

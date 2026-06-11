@@ -234,7 +234,7 @@ export default function ResumenPage() {
     for (const m of visibles) {
       const key =
         m.categoria === 'ajuste'
-          ? 'ajustes de saldo'
+          ? 'plata entre ustedes'
           : m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
       map.set(key, [...(map.get(key) ?? []), m])
     }
@@ -433,12 +433,12 @@ export default function ResumenPage() {
               )}
               {ajustesMes.length > 0 && (
                 <p className="mt-2 text-xs text-tinta-suave">
-                  Además hubo {ajustesMes.length} pago{ajustesMes.length === 1 ? '' : 's'} de
-                  saldo por{' '}
+                  Además se movieron{' '}
                   <span className="num">
                     {plata(ajustesMes.reduce((a, m) => a + Number(m.monto), 0))}
-                  </span>
-                  .
+                  </span>{' '}
+                  directo entre ustedes ({ajustesMes.length} préstamo
+                  {ajustesMes.length === 1 ? '' : 's'}/devolución — ya cuentan en el neto).
                 </p>
               )}
 

@@ -33,7 +33,11 @@ export async function avisarMovimiento(
 
     const otros = perfiles.filter((p) => p.id !== actorId).map((p) => p.id)
     await enviarPush(admin, otros, {
-      titulo: `${nombreDe(perfiles, actorId)} anotó un gasto`,
+      // 'ajuste' = préstamo/devolución: no es un gasto, es plata entre los dos
+      titulo:
+        mov.categoria === 'ajuste'
+          ? `${nombreDe(perfiles, actorId)} anotó plata entre ustedes`
+          : `${nombreDe(perfiles, actorId)} anotó un gasto`,
       cuerpo: `${mov.descripcion} — ${plata(Number(mov.monto))}`,
       url: '/resumen',
       tag: 'gasto-nuevo',
@@ -55,7 +59,9 @@ export async function avisarMovimiento(
       .select('monto, categoria, fecha, es_personal')
       .eq('categoria', categoria)
       .gte('fecha', `${mes}-01`)
-      .lte('fecha', `${mes}-31`)
+      // nunca "lte mes-31": Postgres rechaza fechas inválidas (30/2, 31/4…)
+      // y la query entera fallaba en silencio en los meses cortos
+      .lt('fecha', `${mesShift(mes, 1)}-01`)
     const total = (delMes ?? [])
       .filter((m) => !m.es_personal)
       .reduce((a, m) => a + Number(m.monto), 0)
@@ -119,7 +125,7 @@ export async function netoDelMes(admin: SupabaseClient, mes: string) {
       .from('movimientos')
       .select('monto, pagado_por, prop_pagador, es_personal')
       .gte('fecha', `${mes}-01`)
-      .lte('fecha', `${mes}-31`),
+      .lt('fecha', `${mesShift(mes, 1)}-01`),
     perfilesDe(admin),
   ])
   if (perfiles.length !== 2) return null
@@ -180,7 +186,7 @@ export async function recordatoriosDiarios(admin: SupabaseClient) {
       .from('movimientos')
       .select('descripcion, es_personal')
       .gte('fecha', `${mesActual}-01`)
-      .lte('fecha', `${mesActual}-31`),
+      .lt('fecha', `${mesShift(mesActual, 1)}-01`),
     admin.from('deudas').select('descripcion, created_at, fecha_primera_cuota'),
   ])
   const vencenHoy = (fijos ?? []).filter((f) => {
