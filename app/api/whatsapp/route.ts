@@ -135,25 +135,33 @@ export async function POST(request: Request) {
 
   for (const msg of mensajes) {
     if (!msg?.from) continue
+    try {
+      // botón "✓ Tachar {mes}"
+      if (msg.type === 'interactive') {
+        const id = msg.interactive?.button_reply?.id
+        if (id?.startsWith('tachar_')) await tacharDesdeChat(msg.from, id.slice(7))
+        continue
+      }
 
-    // botón "✓ Tachar {mes}"
-    if (msg.type === 'interactive') {
-      const id = msg.interactive?.button_reply?.id
-      if (id?.startsWith('tachar_')) await tacharDesdeChat(msg.from, id.slice(7))
-      continue
+      if (msg.type !== 'text') continue
+      const texto = msg.text?.body ?? ''
+      const comando = sinAcentos(texto.trim())
+
+      if (comando === 'saldo' || comando === 'resumen') {
+        await responderSaldo(msg.from)
+        continue
+      }
+
+      const r = await registrarGasto({ texto, telefono: msg.from })
+      await textoWhatsApp(msg.from, r.mensaje)
+    } catch (e) {
+      // jamás devolvemos error a Meta (reintentaría en loop); avisamos por chat
+      console.error('whatsapp webhook:', e)
+      await textoWhatsApp(
+        msg.from,
+        'Algo falló al procesar el mensaje (¿faltará configurar el servidor?). Probá de nuevo.'
+      )
     }
-
-    if (msg.type !== 'text') continue
-    const texto = msg.text?.body ?? ''
-    const comando = sinAcentos(texto.trim())
-
-    if (comando === 'saldo' || comando === 'resumen') {
-      await responderSaldo(msg.from)
-      continue
-    }
-
-    const r = await registrarGasto({ texto, telefono: msg.from })
-    await textoWhatsApp(msg.from, r.mensaje)
   }
 
   // siempre 200 rápido para que Meta no reintente
