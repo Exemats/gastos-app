@@ -314,6 +314,22 @@ export default function ResumenPage() {
     return `${deudor.nombre} debe ${plata(Math.abs(diff))} a ${acreedor.nombre}`
   }
 
+  // versión visual de lineaSaldo: el monto resalta en negrita y en
+  // verde/rojo según te convenga a "vos" (en rojo si sos quien debe)
+  const filaSaldo = (diff: number, p1: Profile, p2: Profile) => {
+    if (Math.abs(diff) < 1) return <span className="font-semibold text-verde">a mano ✓</span>
+    const deudor = diff > 0 ? p2 : p1
+    const acreedor = diff > 0 ? p1 : p2
+    const color = deudor.id === userId ? 'text-rojo' : 'text-verde'
+    return (
+      <>
+        {deudor.nombre} debe{' '}
+        <span className={`num font-semibold ${color}`}>{plata(Math.abs(diff))}</span> a{' '}
+        {acreedor.nombre}
+      </>
+    )
+  }
+
   const etiquetaDivision = (m: Movimiento) =>
     m.es_personal
       ? '🔒 personal'
@@ -534,32 +550,34 @@ export default function ResumenPage() {
                   (esMesActual && cuotasInternasActivas.length > 0)) && (
                 <div className="mt-4 border-t border-linea pt-3 text-sm">
                   {desglose && hayDesglose && (
-                    <div className="mb-3 grid gap-1 text-xs">
-                      <p className="font-medium uppercase tracking-wide text-tinta-suave">
+                    <div className="mb-3">
+                      <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-tinta-suave">
                         Saldo del mes, por fuente
                       </p>
-                      <div className="flex justify-between gap-2">
-                        <span className="text-tinta-suave">Gastos del depto</span>
-                        <span className="num text-right">
-                          {lineaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}
-                        </span>
+                      <div className="divide-y divide-linea rounded-lg border border-linea px-3">
+                        <div className="flex items-baseline justify-between gap-2 py-2">
+                          <span className="text-tinta-suave">Gastos del depto</span>
+                          <span className="text-right">
+                            {filaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}
+                          </span>
+                        </div>
+                        {ajustesMes.length > 0 && (
+                          <div className="flex items-baseline justify-between gap-2 py-2">
+                            <span className="text-tinta-suave">Préstamos</span>
+                            <span className="text-right">
+                              {filaSaldo(desglose.diffPrestamos, desglose.p1, desglose.p2)}
+                            </span>
+                          </div>
+                        )}
+                        {cuotasInternasActivas.length > 0 && (
+                          <div className="flex items-baseline justify-between gap-2 py-2">
+                            <span className="text-tinta-suave">Cuotas entre ustedes</span>
+                            <span className="text-right">
+                              {filaSaldo(desglose.diffCuotas, desglose.p1, desglose.p2)}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      {ajustesMes.length > 0 && (
-                        <div className="flex justify-between gap-2">
-                          <span className="text-tinta-suave">Préstamos</span>
-                          <span className="num text-right">
-                            {lineaSaldo(desglose.diffPrestamos, desglose.p1, desglose.p2)}
-                          </span>
-                        </div>
-                      )}
-                      {cuotasInternasActivas.length > 0 && (
-                        <div className="flex justify-between gap-2">
-                          <span className="text-tinta-suave">Cuotas entre ustedes</span>
-                          <span className="num text-right">
-                            {lineaSaldo(desglose.diffCuotas, desglose.p1, desglose.p2)}
-                          </span>
-                        </div>
-                      )}
                     </div>
                   )}
                   {cierre.saldado ? (
