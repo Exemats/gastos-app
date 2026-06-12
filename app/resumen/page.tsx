@@ -354,15 +354,18 @@ export default function ResumenPage() {
   }
 
   async function copiarResumen() {
-    const lineas = [`📒 ${nombreMes(mes)} — La libreta`]
+    const titulo = nombreMes(mes)
+    const lineas = [`📒 *${titulo.charAt(0).toUpperCase() + titulo.slice(1)}* — La libreta`, '']
     lineas.push(`Compartido: ${plata(totalComp)} (${compMes.length} movimientos)`)
     for (const { perfil, pago, suParte } of porPersona) {
-      lineas.push(`· ${perfil.nombre} pagó ${plata(pago)} (su parte: ${plata(suParte)})`)
+      lineas.push(`· ${perfil.nombre} pagó ${plata(pago)} · su parte ${plata(suParte)}`)
     }
     if (cierre) {
-      if (cierre.saldado) lineas.push(`✓ Saldado el ${fechaCorta(cierre.saldado.created_at)}`)
-      else {
+      if (cierre.saldado) {
+        lineas.push('', `*✓ Saldado el ${fechaCorta(cierre.saldado.created_at)}*`)
+      } else {
         if (desglose && hayDesglose) {
+          lineas.push('', 'Saldo del mes:')
           lineas.push(
             `· Gastos del depto: ${lineaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}`
           )
@@ -377,13 +380,19 @@ export default function ResumenPage() {
             )
           }
         }
+        lineas.push('')
         if (cierre.monto >= 1)
-          lineas.push(`→ ${cierre.deudor.nombre} le transfiere ${plata(cierre.monto)} a ${cierre.acreedor.nombre}`)
-        else lineas.push('→ A mano ✓')
+          lineas.push(
+            `*→ ${cierre.deudor.nombre} le transfiere ${plata(cierre.monto)} a ${cierre.acreedor.nombre}*`
+          )
+        else lineas.push('*→ A mano ✓*')
       }
     }
-    for (const { perfil, cuotaMensual, restante } of porDeudor) {
-      lineas.push(`Cuotas ${perfil.nombre}: ${plata(cuotaMensual)}/mes (faltan ${plata(restante)})`)
+    if (porDeudor.length > 0) {
+      lineas.push('', 'Cuotas activas:')
+      for (const { perfil, cuotaMensual, restante } of porDeudor) {
+        lineas.push(`· ${perfil.nombre}: ${plata(cuotaMensual)}/mes (faltan ${plata(restante)})`)
+      }
     }
     try {
       await navigator.clipboard.writeText(lineas.join('\n'))
