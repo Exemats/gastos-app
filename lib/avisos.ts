@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enviarPush } from './push'
-import { calcularBalance, plata, nombreMes, hoyArgentina, mesShift } from './format'
+import { calcularBalance, calcularBalanceCuotasInternas, plata, nombreMes, hoyArgentina, mesShift } from './format'
 import { coincideNombre } from './parsear-gasto'
 
 /**
@@ -118,20 +118,38 @@ export async function avisarTachado(admin: SupabaseClient, mes: string, actorId:
   }
 }
 
-/** Neto a transferir de un mes (compartido, ajustes incluidos), o null si está a mano. */
+/**
+ * Neto a transferir de un mes (compartido, ajustes incluidos), o null si
+ * está a mano. Si `mes` es el mes en curso, suma además la cuota de este
+ * mes de las deudas "entre ustedes" (3ra fuente de saldo).
+ */
 export async function netoDelMes(admin: SupabaseClient, mes: string) {
-  const [{ data: movs }, perfiles] = await Promise.all([
+  const [{ data: movs }, perfiles, { data: deudas }] = await Promise.all([
     admin
       .from('movimientos')
       .select('monto, pagado_por, prop_pagador, es_personal')
       .gte('fecha', `${mes}-01`)
       .lt('fecha', `${mesShift(mes, 1)}-01`),
     perfilesDe(admin),
+    admin
+      .from('deudas')
+      .select('activa, acreedor_tipo, acreedor_profile, valor_cuota')
+      .eq('activa', true)
+      .eq('acreedor_tipo', 'interno'),
   ])
   if (perfiles.length !== 2) return null
   const [p1, p2] = perfiles
   const compartidos = (movs ?? []).filter((m) => !m.es_personal)
   const puso = calcularBalance(compartidos, perfiles)
+  if (mes === hoyArgentina().slice(0, 7)) {
+    const cuotas = calcularBalanceCuotasInternas(
+      (deudas ?? []) as Parameters<typeof calcularBalanceCuotasInternas>[0],
+      perfiles
+    )
+    for (const p of perfiles) {
+      puso.set(p.id, (puso.get(p.id) ?? 0) + (cuotas.get(p.id) ?? 0))
+    }
+  }
   const diff = (puso.get(p1.id) ?? 0) - (puso.get(p2.id) ?? 0)
   if (Math.abs(diff) < 1) return null
   return {

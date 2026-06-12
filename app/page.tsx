@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { calcularBalance, plata, nombreMes, hoyArgentina } from '@/lib/format'
+import { calcularBalance, calcularBalanceCuotasInternas, plata, nombreMes, hoyArgentina } from '@/lib/format'
 import { coincideNombre } from '@/lib/parsear-gasto'
 import type { Deuda, GastoFijo, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
@@ -57,6 +57,12 @@ export default async function Dashboard() {
   const hoy = hoyArgentina()
   const mesActual = hoy.slice(0, 7)
 
+  // --- cuotas "entre nosotros": deudas activas que se le deben al otro,
+  // su cuota de este mes cuenta como una 3ra fuente de saldo (junto con
+  // gastos del depto y préstamos), solo para el mes en curso ---
+  const deudasTodas = (deudas ?? []) as Deuda[]
+  const balanceCuotasInternas = calcularBalanceCuotasInternas(deudasTodas, perfilesOk)
+
   // --- saldo pendiente, mes por mes (cada gasto cuenta en el mes de su fecha) ---
   // Un mes "tachado" en meses_saldados ya se transfirió y no suma acá.
   const saldadosOk = (saldados ?? []) as MesSaldado[]
@@ -64,11 +70,20 @@ export default async function Dashboard() {
   const netoDelMes = (mes: string) => {
     const delMes = compartidos.filter((m) => m.fecha.startsWith(mes))
     const puso = calcularBalance(delMes, perfilesOk)
+    if (mes === mesActual) {
+      for (const p of perfilesOk) {
+        puso.set(p.id, (puso.get(p.id) ?? 0) + (balanceCuotasInternas.get(p.id) ?? 0))
+      }
+    }
     const miExtra = yo ? puso.get(yo.id) ?? 0 : 0
     const suExtra = otro ? puso.get(otro.id) ?? 0 : 0
     return miExtra - suExtra // > 0: el otro me debe ese mes
   }
-  const mesesConMovs = [...new Set(compartidos.map((m) => m.fecha.slice(0, 7)))].sort()
+  // el mes en curso siempre se evalúa, aunque todavía no tenga movimientos
+  // (puede tener saldo solo por cuotas entre ustedes)
+  const mesesConMovs = [
+    ...new Set([...compartidos.map((m) => m.fecha.slice(0, 7)), mesActual]),
+  ].sort()
   const pendientes = mesesConMovs
     .filter((mes) => !saldadosSet.has(mes))
     .map((mes) => ({ mes, balance: netoDelMes(mes) }))
@@ -94,13 +109,15 @@ export default async function Dashboard() {
     .filter((m) => m.fecha.startsWith(mesActual))
     .reduce((acc, m) => acc + Number(m.monto), 0)
 
-  // --- cuotas del mes ---
-  const deudasTodas = (deudas ?? []) as Deuda[]
+  // --- cuotas del mes, separadas por quién las paga ---
   const deudasActivas = deudasTodas.filter((d) => d.activa)
-  const totalCuotasMes = deudasActivas.reduce(
-    (acc, d) => acc + Number(d.valor_cuota),
-    0
-  )
+  const cuotasYoMes = deudasActivas
+    .filter((d) => d.deudor === yo?.id)
+    .reduce((acc, d) => acc + Number(d.valor_cuota), 0)
+  const cuotasOtroMes = deudasActivas
+    .filter((d) => d.deudor === otro?.id)
+    .reduce((acc, d) => acc + Number(d.valor_cuota), 0)
+  const deudasActivasYo = deudasActivas.filter((d) => d.deudor === yo?.id)
 
   // --- fijos que faltan cargar este mes (luz, gas, expensas…) ---
   const fijosCatalogo = (fijos ?? []) as GastoFijo[]
@@ -303,12 +320,13 @@ export default async function Dashboard() {
         </Link>
         <Link href="/deudas" className="card block p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-tinta-suave">
-            Cuotas del mes
+            Tus cuotas del mes
           </p>
-          <p className="num mt-1 text-2xl font-semibold">{plata(totalCuotasMes)}</p>
+          <p className="num mt-1 text-2xl font-semibold">{plata(cuotasYoMes)}</p>
           <p className="mt-0.5 text-xs text-tinta-suave">
-            {deudasActivas.length} deuda{deudasActivas.length === 1 ? '' : 's'} activa
-            {deudasActivas.length === 1 ? '' : 's'}
+            {deudasActivasYo.length} deuda{deudasActivasYo.length === 1 ? '' : 's'} activa
+            {deudasActivasYo.length === 1 ? '' : 's'}
+            {otro && cuotasOtroMes > 0 && ` · ${otro.nombre}: ${plata(cuotasOtroMes)}`}
           </p>
         </Link>
       </section>
