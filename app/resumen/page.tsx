@@ -12,6 +12,7 @@ import {
   hoyISO,
   mesShift,
   calcularBalance,
+  calcularBalanceCuotasInternas,
 } from '@/lib/format'
 import { sinAcentos, parsearMonto } from '@/lib/parsear-gasto'
 import type { Deuda, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
@@ -146,18 +147,55 @@ export default function ResumenPage() {
     () => movsMes.filter((m) => !m.es_personal),
     [movsMes]
   )
+  const esMesActual = mes === hoyISO().slice(0, 7)
+
+  // --- cuotas "entre ustedes": deudas activas tipo 'interno'. Su cuota de
+  // este mes es la 3ra fuente de saldo (junto con gastos del depto y
+  // préstamos), solo aplica al mes en curso, igual que en el dashboard ---
+  const cuotasInternasActivas = useMemo(
+    () => deudas.filter((d) => d.acreedor_tipo === 'interno'),
+    [deudas]
+  )
+  const balanceCuotasInternas = useMemo(
+    () => calcularBalanceCuotasInternas(deudas, perfiles),
+    [deudas, perfiles]
+  )
+
   const cierre = useMemo(() => {
     if (perfiles.length !== 2) return null
     const [p1, p2] = perfiles
     const puso = calcularBalance(compartidosMes, perfiles)
-    const diff = (puso.get(p1.id) ?? 0) - (puso.get(p2.id) ?? 0)
+    let diff = (puso.get(p1.id) ?? 0) - (puso.get(p2.id) ?? 0)
+    if (esMesActual) {
+      diff += (balanceCuotasInternas.get(p1.id) ?? 0) - (balanceCuotasInternas.get(p2.id) ?? 0)
+    }
     return {
       deudor: diff > 0 ? p2 : p1,
       acreedor: diff > 0 ? p1 : p2,
       monto: Math.abs(diff),
       saldado: saldados.find((s) => s.mes === mes) ?? null,
     }
-  }, [perfiles, compartidosMes, saldados, mes])
+  }, [perfiles, compartidosMes, saldados, mes, esMesActual, balanceCuotasInternas])
+
+  // --- desglose de las 3 fuentes de saldo del mes en curso ---
+  const desglose = useMemo(() => {
+    if (perfiles.length !== 2 || !esMesActual) return null
+    const [p1, p2] = perfiles
+    const depto = calcularBalance(compMes, perfiles)
+    const prestamos = calcularBalance(ajustesMes, perfiles)
+    return {
+      p1,
+      p2,
+      diffDepto: (depto.get(p1.id) ?? 0) - (depto.get(p2.id) ?? 0),
+      diffPrestamos: (prestamos.get(p1.id) ?? 0) - (prestamos.get(p2.id) ?? 0),
+      diffCuotas:
+        (balanceCuotasInternas.get(p1.id) ?? 0) - (balanceCuotasInternas.get(p2.id) ?? 0),
+    }
+  }, [perfiles, compMes, ajustesMes, balanceCuotasInternas, esMesActual])
+
+  const hayDesglose = Boolean(
+    desglose && (ajustesMes.length > 0 || cuotasInternasActivas.length > 0)
+  )
 
   async function destachar() {
     const { error } = await supabase.from('meses_saldados').delete().eq('mes', mes)
@@ -267,7 +305,14 @@ export default function ResumenPage() {
   }
 
   const nombreDe = (id: string) => perfiles.find((p) => p.id === id)?.nombre ?? '—'
-  const esMesActual = mes === hoyISO().slice(0, 7)
+
+  // "Fulano debe $X a Mengano" a partir de un diff con signo (positivo = p1 a favor)
+  const lineaSaldo = (diff: number, p1: Profile, p2: Profile) => {
+    if (Math.abs(diff) < 1) return 'a mano ✓'
+    const deudor = diff > 0 ? p2 : p1
+    const acreedor = diff > 0 ? p1 : p2
+    return `${deudor.nombre} debe ${plata(Math.abs(diff))} a ${acreedor.nombre}`
+  }
 
   const etiquetaDivision = (m: Movimiento) =>
     m.es_personal
@@ -316,9 +361,26 @@ export default function ResumenPage() {
     }
     if (cierre) {
       if (cierre.saldado) lineas.push(`✓ Saldado el ${fechaCorta(cierre.saldado.created_at)}`)
-      else if (cierre.monto >= 1)
-        lineas.push(`→ ${cierre.deudor.nombre} le transfiere ${plata(cierre.monto)} a ${cierre.acreedor.nombre}`)
-      else lineas.push('→ A mano ✓')
+      else {
+        if (desglose && hayDesglose) {
+          lineas.push(
+            `· Gastos del depto: ${lineaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}`
+          )
+          if (ajustesMes.length > 0) {
+            lineas.push(
+              `· Préstamos: ${lineaSaldo(desglose.diffPrestamos, desglose.p1, desglose.p2)}`
+            )
+          }
+          if (cuotasInternasActivas.length > 0) {
+            lineas.push(
+              `· Cuotas entre ustedes: ${lineaSaldo(desglose.diffCuotas, desglose.p1, desglose.p2)}`
+            )
+          }
+        }
+        if (cierre.monto >= 1)
+          lineas.push(`→ ${cierre.deudor.nombre} le transfiere ${plata(cierre.monto)} a ${cierre.acreedor.nombre}`)
+        else lineas.push('→ A mano ✓')
+      }
     }
     for (const { perfil, cuotaMensual, restante } of porDeudor) {
       lineas.push(`Cuotas ${perfil.nombre}: ${plata(cuotaMensual)}/mes (faltan ${plata(restante)})`)
@@ -456,8 +518,41 @@ export default function ResumenPage() {
               )}
 
               {/* Cierre del mes: a principio del mes siguiente se transfiere y se tacha */}
-              {cierre && hayTachado && (compartidosMes.length > 0 || cierre.saldado) && (
+              {cierre &&
+                hayTachado &&
+                (compartidosMes.length > 0 ||
+                  cierre.saldado ||
+                  (esMesActual && cuotasInternasActivas.length > 0)) && (
                 <div className="mt-4 border-t border-linea pt-3 text-sm">
+                  {desglose && hayDesglose && (
+                    <div className="mb-3 grid gap-1 text-xs">
+                      <p className="font-medium uppercase tracking-wide text-tinta-suave">
+                        Saldo del mes, por fuente
+                      </p>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-tinta-suave">Gastos del depto</span>
+                        <span className="num text-right">
+                          {lineaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}
+                        </span>
+                      </div>
+                      {ajustesMes.length > 0 && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-tinta-suave">Préstamos</span>
+                          <span className="num text-right">
+                            {lineaSaldo(desglose.diffPrestamos, desglose.p1, desglose.p2)}
+                          </span>
+                        </div>
+                      )}
+                      {cuotasInternasActivas.length > 0 && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-tinta-suave">Cuotas entre ustedes</span>
+                          <span className="num text-right">
+                            {lineaSaldo(desglose.diffCuotas, desglose.p1, desglose.p2)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {cierre.saldado ? (
                     <div className="flex flex-wrap items-baseline justify-between gap-1">
                       <p className="font-semibold text-verde">
@@ -485,11 +580,13 @@ export default function ResumenPage() {
                     </div>
                   ) : cierre.monto < 1 ? (
                     <p className="font-medium text-verde">
-                      A mano ✓ — no hay nada que transferir.
+                      {hayDesglose
+                        ? 'En total, las fuentes de arriba se cancelan: a mano ✓, no hay nada que transferir.'
+                        : 'A mano ✓ — no hay nada que transferir.'}
                     </p>
                   ) : esMesActual ? (
                     <p className="text-tinta-suave">
-                      Mes en curso: por ahora{' '}
+                      {hayDesglose ? 'Mes en curso, en total: por ahora' : 'Mes en curso: por ahora'}{' '}
                       <span className="font-medium text-tinta">
                         {cierre.deudor.nombre} le debe{' '}
                         <span className="num">{plata(cierre.monto)}</span> a{' '}

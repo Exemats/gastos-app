@@ -57,6 +57,20 @@ export default function DeudasPage() {
   const nombreDe = (id: string | null) =>
     perfiles.find((p) => p.id === id)?.nombre ?? '—'
 
+  // agrupadas por quién la debe: las cuotas de cada uno son independientes
+  const porDeudor = perfiles
+    .map((p) => {
+      const mias = visibles.filter((d) => d.deudor === p.id)
+      const activas = mias.filter((d) => d.activa)
+      return {
+        perfil: p,
+        deudas: mias,
+        cuotaMensual: activas.reduce((a, d) => a + Number(d.valor_cuota), 0),
+        restante: activas.reduce((a, d) => a + Number(d.valor_cuota) * d.cuotas_restantes, 0),
+      }
+    })
+    .filter((x) => x.deudas.length > 0)
+
   return (
     <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-2xl">
       <div className="mb-4 flex items-center justify-between">
@@ -84,74 +98,92 @@ export default function DeudasPage() {
           No hay deudas activas. Cuando compren algo en cuotas, anotalo acá.
         </div>
       ) : (
-        <ul className="grid gap-3">
-          {visibles.map((d) => {
-            const acreedor =
-              d.acreedor_tipo === 'interno'
-                ? nombreDe(d.acreedor_profile)
-                : d.acreedor_nombre
-            const restante = Number(d.valor_cuota) * d.cuotas_restantes
-            const pct = (d.cuota_actual / d.cantidad_cuotas) * 100
-            return (
-              <li key={d.id} className={`card p-4 ${d.activa ? '' : 'opacity-60'}`}>
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="font-semibold">{d.descripcion}</p>
-                  <p className="num shrink-0 text-sm text-tinta-suave">
-                    {plataExacta(Number(d.valor_cuota))}/cuota
+        <div className="grid gap-5">
+          {porDeudor.map(({ perfil, deudas: mias, cuotaMensual, restante: restanteTotal }) => (
+            <section key={perfil.id}>
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <h2 className="font-semibold">
+                  {perfil.nombre}
+                  {perfil.id === userId ? ' (vos)' : ''}
+                </h2>
+                {cuotaMensual > 0 && (
+                  <p className="text-sm text-tinta-suave">
+                    <span className="num font-semibold text-tinta">{plata(cuotaMensual)}</span>
+                    /mes · faltan <span className="num">{plata(restanteTotal)}</span>
                   </p>
-                </div>
-                <p className="mt-0.5 text-sm text-tinta-suave">
-                  {nombreDe(d.deudor)} le debe a {acreedor}
-                  {d.fecha_primera_cuota ? ` · desde ${fechaCorta(d.fecha_primera_cuota)}` : ''}
-                </p>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-birome-suave">
-                  <div
-                    className="h-full rounded-full bg-birome"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <div className="mt-2 flex items-center justify-between">
-                  <p className="text-sm">
-                    <span className="num font-semibold">
-                      {d.cuota_actual}/{d.cantidad_cuotas}
-                    </span>{' '}
-                    pagadas ·{' '}
-                    {d.activa ? (
-                      <>
-                        faltan <span className="num font-semibold">{plata(restante)}</span>
-                      </>
-                    ) : (
-                      <span className="font-semibold text-verde">saldada ✓</span>
-                    )}
-                  </p>
-                  {d.activa ? (
-                    <span className="flex items-center gap-2.5">
-                      {d.cuota_actual > 0 && (
-                        <button
-                          className="text-xs text-tinta-suave underline underline-offset-2"
-                          aria-label="Deshacer la última cuota pagada"
-                          onClick={() => reactivar(d)}
-                        >
-                          deshacer
-                        </button>
-                      )}
-                      <button className="btn btn-secundario !px-3 !py-1.5 !text-sm" onClick={() => pagarCuota(d)}>
-                        Pagué una cuota
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      className="text-xs text-tinta-suave underline"
-                      onClick={() => reactivar(d)}
-                    >
-                      Deshacer
-                    </button>
-                  )}
-                </div>
-              </li>
-            )
-          })}
-        </ul>
+                )}
+              </div>
+              <ul className="grid gap-3">
+                {mias.map((d) => {
+                  const acreedor =
+                    d.acreedor_tipo === 'interno'
+                      ? nombreDe(d.acreedor_profile)
+                      : d.acreedor_nombre
+                  const restante = Number(d.valor_cuota) * d.cuotas_restantes
+                  const pct = (d.cuota_actual / d.cantidad_cuotas) * 100
+                  return (
+                    <li key={d.id} className={`card p-4 ${d.activa ? '' : 'opacity-60'}`}>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="font-semibold">{d.descripcion}</p>
+                        <p className="num shrink-0 text-sm text-tinta-suave">
+                          {plataExacta(Number(d.valor_cuota))}/cuota
+                        </p>
+                      </div>
+                      <p className="mt-0.5 text-sm text-tinta-suave">
+                        le debe a {acreedor}
+                        {d.fecha_primera_cuota ? ` · desde ${fechaCorta(d.fecha_primera_cuota)}` : ''}
+                      </p>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-birome-suave">
+                        <div
+                          className="h-full rounded-full bg-birome"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <p className="text-sm">
+                          <span className="num font-semibold">
+                            {d.cuota_actual}/{d.cantidad_cuotas}
+                          </span>{' '}
+                          pagadas ·{' '}
+                          {d.activa ? (
+                            <>
+                              faltan <span className="num font-semibold">{plata(restante)}</span>
+                            </>
+                          ) : (
+                            <span className="font-semibold text-verde">saldada ✓</span>
+                          )}
+                        </p>
+                        {d.activa ? (
+                          <span className="flex items-center gap-2.5">
+                            {d.cuota_actual > 0 && (
+                              <button
+                                className="text-xs text-tinta-suave underline underline-offset-2"
+                                aria-label="Deshacer la última cuota pagada"
+                                onClick={() => reactivar(d)}
+                              >
+                                deshacer
+                              </button>
+                            )}
+                            <button className="btn btn-secundario !px-3 !py-1.5 !text-sm" onClick={() => pagarCuota(d)}>
+                              Pagué una cuota
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            className="text-xs text-tinta-suave underline"
+                            onClick={() => reactivar(d)}
+                          >
+                            Deshacer
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          ))}
+        </div>
       )}
 
       <button
@@ -179,6 +211,7 @@ function NuevaDeudaForm({
   const [acreedorTipo, setAcreedorTipo] = useState<'externo' | 'interno'>('externo')
   const [acreedorNombre, setAcreedorNombre] = useState('')
   const [deudor, setDeudor] = useState(userId ?? '')
+  const [modoMonto, setModoMonto] = useState<'total' | 'cuota'>('total')
   const [montoTotal, setMontoTotal] = useState('')
   const [cuotas, setCuotas] = useState('')
   const [primeraCuota, setPrimeraCuota] = useState('')
@@ -195,20 +228,27 @@ function NuevaDeudaForm({
 
   const otro = perfiles.find((p) => p.id !== deudor)
 
+  // si se sabe el valor de la cuota, el total es cuota × cantidad de cuotas
+  const ingresado = parsearMonto(montoTotal.trim()) ?? 0
+  const nCuotas = parseInt(cuotas, 10) || 0
+  const montoBase = modoMonto === 'cuota' ? ingresado * nCuotas : ingresado
+
   async function crear(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    // entiende formato argentino: "12.500" = 12500, "12500,50" = 12500.5
-    let monto = parsearMonto(montoTotal.trim())
     const n = parseInt(cuotas, 10)
     if (!descripcion.trim()) return setError('Falta la descripción.')
-    if (!monto || monto <= 0) return setError('Poné el monto total.')
+    if (!n || n < 1) return setError('Poné la cantidad de cuotas.')
+    if (!ingresado || ingresado <= 0)
+      return setError(
+        modoMonto === 'cuota' ? 'Poné el valor de cada cuota.' : 'Poné el monto total.'
+      )
+    let monto = montoBase
     if (conDescuento) {
       const d = calcularDescuento(monto, descuentoPct, topeReintegro)
       if (!d) return setError('Poné el % de descuento (o destildá el descuento).')
       monto = d.neto
     }
-    if (!n || n < 1) return setError('Poné la cantidad de cuotas.')
     if (acreedorTipo === 'externo' && !acreedorNombre.trim())
       return setError('¿A quién se le debe?')
     if (acreedorTipo === 'interno' && !otro)
@@ -272,10 +312,18 @@ function NuevaDeudaForm({
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2">
+        <button type="button" className="chip text-center" data-activo={modoMonto === 'total'} onClick={() => setModoMonto('total')}>
+          Sé el total
+        </button>
+        <button type="button" className="chip text-center" data-activo={modoMonto === 'cuota'} onClick={() => setModoMonto('cuota')}>
+          Sé el valor de la cuota
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
         <input
           className="input num"
           inputMode="decimal"
-          placeholder="Monto total $"
+          placeholder={modoMonto === 'cuota' ? 'Valor de cada cuota $' : 'Monto total $'}
           value={montoTotal}
           onChange={(e) => setMontoTotal(e.target.value.replace(/[^\d.,]/g, ''))}
         />
@@ -287,6 +335,11 @@ function NuevaDeudaForm({
           onChange={(e) => setCuotas(e.target.value.replace(/\D/g, ''))}
         />
       </div>
+      {modoMonto === 'cuota' && montoBase > 0 && (
+        <p className="text-xs text-tinta-suave">
+          Total: <span className="num font-medium text-tinta">{plata(montoBase)}</span>
+        </p>
+      )}
       <Descuento
         activo={conDescuento}
         onActivo={setConDescuento}
@@ -294,7 +347,7 @@ function NuevaDeudaForm({
         onPct={setDescuentoPct}
         tope={topeReintegro}
         onTope={setTopeReintegro}
-        bruto={parsearMonto(montoTotal.trim()) ?? 0}
+        bruto={montoBase}
       />
       <div>
         <label className="mb-1 block text-sm font-medium" htmlFor="primera">
