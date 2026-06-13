@@ -1081,16 +1081,21 @@ export default function ResumenPage() {
 
 function GrupoDeudasResumen({ grupo }: { grupo: GrupoDeuda }) {
   return (
-    <div>
-      <div className="flex items-baseline justify-between">
-        <p className="font-semibold">{grupo.nombre}</p>
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-baseline justify-between gap-2">
+        <p className="font-semibold">
+          {grupo.nombre}{' '}
+          <span className="inline-block text-xs text-tinta-suave transition-transform group-open:rotate-180">
+            ▾
+          </span>
+        </p>
         {grupo.cuotaMensual > 0 && (
           <p className="text-sm text-tinta-suave">
             <span className="num font-semibold text-tinta">{plata(grupo.cuotaMensual)}</span>
             /mes · faltan <span className="num">{plata(grupo.restante)}</span>
           </p>
         )}
-      </div>
+      </summary>
       <ul className="mt-1.5 grid gap-1">
         {grupo.deudas.map((d) => (
           <li
@@ -1104,6 +1109,6 @@ function GrupoDeudasResumen({ grupo }: { grupo: GrupoDeuda }) {
           </li>
         ))}
       </ul>
-    </div>
+    </details>
   )
 }
