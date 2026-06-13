@@ -32,6 +32,7 @@ export default function CargaRapida({
   const [hecho, setHecho] = useState<{
     clase: 'movimiento' | 'deuda'
     id: string
+    deudaId?: string
     mensaje: string
   } | null>(null)
   const [deshaciendo, setDeshaciendo] = useState(false)
@@ -92,14 +93,14 @@ export default function CargaRapida({
     const promo = g.descuento
       ? `, ${g.descuento.pct}% off de ${plata(g.descuento.bruto)}`
       : ''
-    const mensaje =
-      res.clase === 'deuda' && fijo?.paga_tercero
-        ? `Anotado ✓ ${descripcion}: ${plata(parteTercero(g.monto, fijo))} como deuda con ${fijo.paga_tercero}.`
-        : g.esAjuste
-          ? `Anotado ✓ ${plata(g.monto)} — ${descripcion} (directo al saldo, puso ${pagador.nombre})`
-          : `Anotado ✓ ${plata(g.monto)} — ${descripcion} (${etiquetaDivision(g.esPersonal, g.esMitad, tipo, fijo)}, pagó ${pagador.nombre}${promo})`
+    const deuda = fijo?.paga_tercero
+      ? ` y ${plata(parteTercero(g.monto, fijo))} quedó como deuda con ${fijo.paga_tercero}`
+      : ''
+    const mensaje = g.esAjuste
+      ? `Anotado ✓ ${plata(g.monto)} — ${descripcion} (directo al saldo, puso ${pagador.nombre})`
+      : `Anotado ✓ ${plata(g.monto)} — ${descripcion} (${etiquetaDivision(g.esPersonal, g.esMitad, tipo, fijo)}, pagó ${pagador.nombre}${promo})${deuda}`
     setTexto('')
-    setHecho({ clase: res.clase, id: res.id, mensaje })
+    setHecho({ clase: res.clase, id: res.id, deudaId: res.deudaId, mensaje })
     router.refresh()
   }
 
@@ -110,6 +111,9 @@ export default function CargaRapida({
       .from(hecho.clase === 'deuda' ? 'deudas' : 'movimientos')
       .delete()
       .eq('id', hecho.id)
+    if (!error && hecho.deudaId) {
+      await supabase.from('deudas').delete().eq('id', hecho.deudaId)
+    }
     setDeshaciendo(false)
     if (error) {
       setError(errorLegible(error.message))

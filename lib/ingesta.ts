@@ -126,7 +126,7 @@ export async function registrarGasto(
   if (!esPersonal) {
     const { data: fijosCat } = await supabase
       .from('gastos_fijos')
-      .select('nombre, prop_pagador, paga_tercero, prop_tercero')
+      .select('nombre, prop_pagador, paga_tercero, prop_tercero, tercero_deudor')
       .eq('activo', true)
     fijoCatalogo =
       (fijosCat as GastoFijoCatalogo[] | null)?.find((f) =>
@@ -135,30 +135,11 @@ export async function registrarGasto(
     if (fijoCatalogo) tipo = 'gasto_fijo'
   }
 
-  // Lo paga un tercero (Expensas → Seba): se anota como deuda, no movimiento
-  if (fijoCatalogo?.paga_tercero) {
-    const parte =
-      Math.round(monto * Number(fijoCatalogo.prop_tercero ?? 0.5) * 100) / 100
-    const { data: creada, error } = await supabase
-      .from('deudas')
-      .insert({
-        descripcion: `${descripcion} ${nombreMes(fecha.slice(0, 7))}`,
-        acreedor_tipo: 'externo',
-        acreedor_nombre: fijoCatalogo.paga_tercero,
-        deudor: pagador.id,
-        monto_total: parte,
-        cantidad_cuotas: 1,
-        fecha_primera_cuota: fecha,
-      })
-      .select('id')
-      .single()
-    if (error) return { ok: false, mensaje: `Error al guardar: ${error.message}` }
-    if (creada) await avisarDeuda(supabase, creada.id, pagador.id)
-    return {
-      ok: true,
-      mensaje: `Anotado ✓ ${descripcion}: la mitad de ${pagador.nombre} (${plata(parte)}) quedó como deuda con ${fijoCatalogo.paga_tercero}.`,
-    }
-  }
+  // Expensas y similares llevan el mes en la descripción (lo paga un
+  // tercero: además del gasto del depto, queda una deuda con él)
+  const descripcionFinal = fijoCatalogo?.paga_tercero
+    ? `${descripcion} ${nombreMes(fecha.slice(0, 7))}`
+    : descripcion
 
   // --- 4. insertar movimiento ---
   // misma regla de división que la app (catálogo: 0.5 = mitades, null = % del perfil)
@@ -168,7 +149,7 @@ export async function registrarGasto(
     .insert({
       tipo: esPersonal ? 'gasto_depto' : tipo,
       fecha,
-      descripcion,
+      descripcion: descripcionFinal,
       monto,
       pagado_por: pagador.id,
       // las categorías son obligatorias: sin pista, va a "otros"
@@ -182,6 +163,33 @@ export async function registrarGasto(
   if (error) return { ok: false, mensaje: `Error al guardar: ${error.message}` }
   if (creado && !esPersonal) await avisarMovimiento(supabase, creado.id, pagador.id)
 
+  // Lo paga un tercero (Expensas → Seba): además, la parte de quien le
+  // queda debiendo (tercero_deudor, o quien carga si no está fijado)
+  // se anota como deuda con él
+  let mensajeDeuda = ''
+  if (fijoCatalogo?.paga_tercero) {
+    const parte =
+      Math.round(monto * Number(fijoCatalogo.prop_tercero ?? 0.5) * 100) / 100
+    const deudorId = fijoCatalogo.tercero_deudor ?? pagador.id
+    const { data: creada, error: errorDeuda } = await supabase
+      .from('deudas')
+      .insert({
+        descripcion: descripcionFinal,
+        acreedor_tipo: 'externo',
+        acreedor_nombre: fijoCatalogo.paga_tercero,
+        deudor: deudorId,
+        monto_total: parte,
+        cantidad_cuotas: 1,
+        fecha_primera_cuota: fecha,
+      })
+      .select('id')
+      .single()
+    if (errorDeuda) return { ok: false, mensaje: `Error al guardar: ${errorDeuda.message}` }
+    if (creada) await avisarDeuda(supabase, creada.id, pagador.id)
+    const deudorNombre = perfiles.find((p) => p.id === deudorId)?.nombre ?? pagador.nombre
+    mensajeDeuda = ` y ${plata(parte)} quedó como deuda de ${deudorNombre} con ${fijoCatalogo.paga_tercero}`
+  }
+
   const division = esPersonal
     ? 'personal'
     : prop === 0.5
@@ -192,7 +200,7 @@ export async function registrarGasto(
   const promo = descuento ? `, ${descuento.pct}% off de ${plata(descuento.bruto)}` : ''
   return {
     ok: true,
-    mensaje: `Anotado ✓ ${plata(monto)} — ${descripcion} (${division}, pagó ${pagador.nombre}${promo})`,
+    mensaje: `Anotado ✓ ${plata(monto)} — ${descripcionFinal} (${division}, pagó ${pagador.nombre}${promo})${mensajeDeuda}`,
   }
 }
 
@@ -201,4 +209,5 @@ type GastoFijoCatalogo = {
   prop_pagador: number | null
   paga_tercero: string | null
   prop_tercero: number | null
+  tercero_deudor: string | null
 }

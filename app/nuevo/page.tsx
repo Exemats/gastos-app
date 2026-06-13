@@ -364,6 +364,10 @@ function NuevoGastoForm() {
     ? calcularDescuento(montoNum, descuentoPct, topeReintegro)?.neto ?? montoNum
     : montoNum
   const montoTercero = fijoElegido ? parteTercero(montoNeto, fijoElegido) : 0
+  const nombreTerceroDeudor =
+    perfiles.find((p) => p.id === fijoElegido?.tercero_deudor)?.nombre ??
+    yo?.nombre ??
+    'quien carga'
 
   const DIVISIONES: { id: Division; etiqueta: string }[] = [
     { id: 'partes', etiqueta: etiquetaPartes(perfiles) },
@@ -439,8 +443,12 @@ function NuevoGastoForm() {
       return
     }
     setOk(true)
-    const destino =
-      r.clase === 'deuda' ? '/deudas' : division === 'personal' && modo === 'gasto' ? '/personal' : '/'
+    const vaADeudas = r.clase === 'deuda' || Boolean(r.deudaId)
+    const destino = vaADeudas
+      ? '/deudas'
+      : division === 'personal' && modo === 'gasto'
+        ? '/personal'
+        : '/'
     setTimeout(() => router.push(destino), 650)
   }
 
@@ -540,10 +548,11 @@ function NuevoGastoForm() {
           {esTercero && fijoElegido?.paga_tercero ? (
             <div className="rounded-lg bg-birome-suave p-3 text-sm lg:col-span-2">
               <p>
-                Lo paga <span className="font-semibold">{fijoElegido.paga_tercero}</span>. Acá
-                se anota la mitad de {yo?.nombre ?? 'quien carga'} —{' '}
-                <span className="num font-semibold">{plata(montoTercero)}</span> — como deuda
-                con {fijoElegido.paga_tercero}, junto a las demás.
+                Se anota como gasto del depto, dividido como cualquier servicio. Además,
+                como lo paga <span className="font-semibold">{fijoElegido.paga_tercero}</span>,
+                la mitad — <span className="num font-semibold">{plata(montoTercero)}</span> —
+                queda como deuda de {nombreTerceroDeudor} con {fijoElegido.paga_tercero}, junto
+                a las demás.
               </p>
               <p className="mt-1 text-xs text-tinta-suave">
                 Cuando se la pagues, la tachás en Cuotas (&quot;Pagué una cuota&quot;).
@@ -633,11 +642,9 @@ function NuevoGastoForm() {
               ? 'Anotado ✓'
               : guardando
                 ? 'Anotando…'
-                : esTercero
-                  ? `Anotar deuda con ${fijoElegido?.paga_tercero}`
-                  : division === 'personal'
-                    ? 'Anotar en lo tuyo 🔒'
-                    : 'Anotar en la libreta'}
+                : division === 'personal'
+                  ? 'Anotar en lo tuyo 🔒'
+                  : 'Anotar en la libreta'}
           </button>
           {error && <p className="text-sm text-rojo lg:col-span-2">{error}</p>}
         </form>
