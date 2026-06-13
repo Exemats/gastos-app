@@ -26,6 +26,11 @@ export default function DeudasPage() {
   const [verSaldadas, setVerSaldadas] = useState(false)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [cargando, setCargando] = useState(true)
+  const [esEscritorio, setEsEscritorio] = useState(false)
+
+  useEffect(() => {
+    setEsEscritorio(window.matchMedia('(min-width: 1024px)').matches)
+  }, [])
 
   const cargar = useCallback(async () => {
     const [{ data: u }, { data: d }, { data: p }, { data: f }] = await Promise.all([
@@ -89,10 +94,9 @@ export default function DeudasPage() {
   ]
 
   const hayDeudas = debes.length > 0 || teDeben.length > 0
-  const totalTeDeben = teDeben.reduce((a, g) => a + g.restante, 0)
 
   return (
-    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-2xl">
+    <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-4xl">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl">Deudas</h1>
         <button
@@ -123,40 +127,34 @@ export default function DeudasPage() {
           anotalo acá.
         </div>
       ) : (
-        <div className="grid gap-5">
-          {teDeben.length > 0 && (
-            <details className="card group p-4" open={debes.length === 0}>
-              <summary className="flex cursor-pointer list-none items-center justify-between">
-                <span className="font-semibold">Te deben</span>
-                <span className="flex items-center gap-1.5">
-                  <span className="num font-semibold text-verde">{plata(totalTeDeben)}</span>
-                  <span className="text-tinta-suave transition-transform group-open:rotate-180">
-                    ▾
-                  </span>
-                </span>
-              </summary>
-              <div className="mt-4 grid gap-5">
-                {teDeben.map((g) => (
-                  <GrupoDeudas
-                    key={`tedeben-${g.nombre}`}
-                    grupo={g}
-                    contexto="te-deben"
-                    onPagar={pagarCuota}
-                    onReactivar={reactivar}
-                  />
-                ))}
-              </div>
-            </details>
-          )}
+        <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
           {debes.length > 0 && (
-            <section>
+            <section className={teDeben.length === 0 ? 'lg:col-span-2' : ''}>
               <h2 className="mb-3 text-lg">Debés</h2>
-              <div className="grid gap-5">
+              <div className={`grid gap-3 ${teDeben.length === 0 ? 'lg:grid-cols-2' : ''}`}>
                 {debes.map((g) => (
                   <GrupoDeudas
                     key={`debes-${g.nombre}`}
                     grupo={g}
                     contexto="debes"
+                    abierto={esEscritorio}
+                    onPagar={pagarCuota}
+                    onReactivar={reactivar}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+          {teDeben.length > 0 && (
+            <section className={debes.length === 0 ? 'lg:col-span-2' : ''}>
+              <h2 className="mb-3 text-lg">Te deben</h2>
+              <div className={`grid gap-3 ${debes.length === 0 ? 'lg:grid-cols-2' : ''}`}>
+                {teDeben.map((g) => (
+                  <GrupoDeudas
+                    key={`tedeben-${g.nombre}`}
+                    grupo={g}
+                    contexto="te-deben"
+                    abierto={esEscritorio}
                     onPagar={pagarCuota}
                     onReactivar={reactivar}
                   />
@@ -181,26 +179,31 @@ export default function DeudasPage() {
 function GrupoDeudas({
   grupo,
   contexto,
+  abierto,
   onPagar,
   onReactivar,
 }: {
   grupo: GrupoDeuda
   contexto: 'debes' | 'te-deben'
+  abierto: boolean
   onPagar: (d: Deuda) => void
   onReactivar: (d: Deuda) => void
 }) {
   return (
-    <div>
-      <div className="mb-2 flex items-baseline justify-between gap-2">
+    <details className="card group p-4" open={abierto}>
+      <summary className="flex cursor-pointer list-none items-baseline justify-between gap-2">
         <h3 className="font-semibold">{grupo.nombre}</h3>
-        {grupo.cuotaMensual > 0 && (
-          <p className="text-sm text-tinta-suave">
-            <span className="num font-semibold text-tinta">{plata(grupo.cuotaMensual)}</span>
-            /mes · faltan <span className="num">{plata(grupo.restante)}</span>
-          </p>
-        )}
-      </div>
-      <ul className="grid gap-2">
+        <span className="flex items-center gap-1.5 text-sm text-tinta-suave">
+          {grupo.cuotaMensual > 0 && (
+            <span className="num">
+              <span className="font-semibold text-tinta">{plata(grupo.cuotaMensual)}</span>/mes ·
+              faltan <span className="font-semibold">{plata(grupo.restante)}</span>
+            </span>
+          )}
+          <span className="transition-transform group-open:rotate-180">▾</span>
+        </span>
+      </summary>
+      <ul className="mt-3 grid gap-2">
         {grupo.deudas.map((d) => {
           const restante = Number(d.valor_cuota) * d.cuotas_restantes
           const pct = (d.cuota_actual / d.cantidad_cuotas) * 100
@@ -270,7 +273,7 @@ function GrupoDeudas({
           )
         })}
       </ul>
-    </div>
+    </details>
   )
 }
 
