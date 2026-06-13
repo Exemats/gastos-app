@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { calcularBalance, calcularBalanceCuotasInternas, plata, nombreMes, hoyArgentina } from '@/lib/format'
 import { coincideNombre } from '@/lib/parsear-gasto'
+import { deudasQueDebes, deudasQueTeDeben } from '@/lib/deudas'
 import type { Deuda, GastoFijo, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
 import LogoutButton from '@/components/LogoutButton'
@@ -109,21 +110,20 @@ export default async function Dashboard() {
     .filter((m) => m.fecha.startsWith(mesActual))
     .reduce((acc, m) => acc + Number(m.monto), 0)
 
-  // --- cuotas del mes, separadas por quién las paga ---
+  // --- cuotas del mes: lo que debés vos (a Vicky o a un tercero) y lo
+  // que te deben a vos (Vicky, o un tercero) ---
   const deudasActivas = deudasTodas.filter((d) => d.activa)
-  const cuotasYoMes = deudasActivas
-    .filter((d) => d.deudor === yo?.id)
-    .reduce((acc, d) => acc + Number(d.valor_cuota), 0)
-  const cuotasOtroMes = deudasActivas
-    .filter((d) => d.deudor === otro?.id)
-    .reduce((acc, d) => acc + Number(d.valor_cuota), 0)
-  const deudasActivasYo = deudasActivas.filter((d) => d.deudor === yo?.id)
+  const deudasActivasYo = deudasQueDebes(deudasActivas, yo?.id ?? null)
+  const cuotasYoMes = deudasActivasYo.reduce((acc, d) => acc + Number(d.valor_cuota), 0)
+  const deudasQueMeDeben = deudasQueTeDeben(deudasActivas, yo?.id ?? null)
+  const cuotasQueMeDebenMes = deudasQueMeDeben.reduce((acc, d) => acc + Number(d.valor_cuota), 0)
 
   // --- fijos que faltan cargar este mes (luz, gas, expensas…) ---
   const fijosCatalogo = (fijos ?? []) as GastoFijo[]
   const fijosPendientes = fijosCatalogo.filter((f) => {
     if (f.paga_tercero) {
-      // Expensas: se carga como deuda con el tercero, no como movimiento
+      // Expensas: además del movimiento, siempre se crea junto la deuda
+      // con el tercero — alcanza con mirar esa
       return !deudasTodas.some(
         (d) =>
           coincideNombre(d.descripcion, f.nombre) &&
@@ -326,7 +326,7 @@ export default async function Dashboard() {
           <p className="mt-0.5 text-xs text-tinta-suave">
             {deudasActivasYo.length} deuda{deudasActivasYo.length === 1 ? '' : 's'} activa
             {deudasActivasYo.length === 1 ? '' : 's'}
-            {otro && cuotasOtroMes > 0 && ` · ${otro.nombre}: ${plata(cuotasOtroMes)}`}
+            {cuotasQueMeDebenMes > 0 && ` · te deben ${plata(cuotasQueMeDebenMes)}`}
           </p>
         </Link>
       </section>

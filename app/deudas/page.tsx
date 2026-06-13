@@ -8,25 +8,42 @@ import Nav from '@/components/Nav'
 import Descuento, { calcularDescuento } from '@/components/Descuento'
 import { useRealtime } from '@/lib/use-realtime'
 import { avisar } from '@/lib/avisar'
+import {
+  agruparDeudas,
+  deudasQueDebes,
+  deudasQueTeDeben,
+  etiquetaAcreedor,
+  etiquetaDeudor,
+  type GrupoDeuda,
+} from '@/lib/deudas'
 
 export default function DeudasPage() {
   const supabase = createClient()
   const [deudas, setDeudas] = useState<Deuda[]>([])
   const [perfiles, setPerfiles] = useState<Profile[]>([])
+  const [nombresFijos, setNombresFijos] = useState<string[]>([])
   const [userId, setUserId] = useState<string | null>(null)
   const [verSaldadas, setVerSaldadas] = useState(false)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [cargando, setCargando] = useState(true)
 
   const cargar = useCallback(async () => {
-    const [{ data: u }, { data: d }, { data: p }] = await Promise.all([
+    const [{ data: u }, { data: d }, { data: p }, { data: f }] = await Promise.all([
       supabase.auth.getUser(),
-      supabase.from('deudas').select('*').order('activa', { ascending: false }).order('created_at', { ascending: false }),
+      supabase
+        .from('deudas')
+        .select('*')
+        .order('activa', { ascending: false })
+        .order('created_at', { ascending: false }),
       supabase.from('profiles').select('id, nombre, porcentaje'),
+      supabase.from('gastos_fijos').select('paga_tercero'),
     ])
     setUserId(u.user?.id ?? null)
     setDeudas((d ?? []) as Deuda[])
     setPerfiles((p ?? []).map((x) => ({ ...x, porcentaje: Number(x.porcentaje) })))
+    setNombresFijos(
+      (f ?? []).map((x) => x.paga_tercero).filter((x): x is string => Boolean(x))
+    )
     setCargando(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -54,28 +71,33 @@ export default function DeudasPage() {
   }
 
   const visibles = deudas.filter((d) => (verSaldadas ? true : d.activa))
-  const nombreDe = (id: string | null) =>
-    perfiles.find((p) => p.id === id)?.nombre ?? '—'
+  const debes = agruparDeudas(deudasQueDebes(visibles, userId), (d) =>
+    etiquetaAcreedor(d, perfiles)
+  )
+  const teDeben = agruparDeudas(deudasQueTeDeben(visibles, userId), (d) =>
+    etiquetaDeudor(d, perfiles)
+  )
 
-  // agrupadas por quién la debe: las cuotas de cada uno son independientes
-  const porDeudor = perfiles
-    .map((p) => {
-      const mias = visibles.filter((d) => d.deudor === p.id)
-      const activas = mias.filter((d) => d.activa)
-      return {
-        perfil: p,
-        deudas: mias,
-        cuotaMensual: activas.reduce((a, d) => a + Number(d.valor_cuota), 0),
-        restante: activas.reduce((a, d) => a + Number(d.valor_cuota) * d.cuotas_restantes, 0),
-      }
-    })
-    .filter((x) => x.deudas.length > 0)
+  // nombres conocidos para elegir "a quién"/"quién": el catálogo de fijos
+  // con tercero (Seba) + los nombres ya usados en otras deudas
+  const nombresConocidos = [
+    ...new Set([
+      ...nombresFijos,
+      ...deudas.map((d) => d.acreedor_nombre).filter((x): x is string => Boolean(x)),
+      ...deudas.map((d) => d.deudor_nombre).filter((x): x is string => Boolean(x)),
+    ]),
+  ]
+
+  const hayDeudas = debes.length > 0 || teDeben.length > 0
 
   return (
     <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-2xl">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl">Deudas en cuotas</h1>
-        <button className="btn btn-primario !py-2 !text-sm" onClick={() => setMostrarForm((v) => !v)}>
+        <h1 className="text-2xl">Deudas</h1>
+        <button
+          className="btn btn-primario !py-2 !text-sm"
+          onClick={() => setMostrarForm((v) => !v)}
+        >
           {mostrarForm ? 'Cerrar' : '+ Nueva'}
         </button>
       </div>
@@ -84,6 +106,7 @@ export default function DeudasPage() {
         <NuevaDeudaForm
           perfiles={perfiles}
           userId={userId}
+          nombresConocidos={nombresConocidos}
           onCreada={() => {
             setMostrarForm(false)
             cargar()
@@ -93,96 +116,45 @@ export default function DeudasPage() {
 
       {cargando ? (
         <p className="text-sm text-tinta-suave">Cargando…</p>
-      ) : visibles.length === 0 ? (
+      ) : !hayDeudas ? (
         <div className="card p-5 text-center text-sm text-tinta-suave">
-          No hay deudas activas. Cuando compren algo en cuotas, anotalo acá.
+          No hay deudas activas. Cuando compren algo en cuotas, o alguien les deba plata,
+          anotalo acá.
         </div>
       ) : (
-        <div className="grid gap-5">
-          {porDeudor.map(({ perfil, deudas: mias, cuotaMensual, restante: restanteTotal }) => (
-            <section key={perfil.id}>
-              <div className="mb-2 flex items-baseline justify-between gap-2">
-                <h2 className="font-semibold">
-                  {perfil.nombre}
-                  {perfil.id === userId ? ' (vos)' : ''}
-                </h2>
-                {cuotaMensual > 0 && (
-                  <p className="text-sm text-tinta-suave">
-                    <span className="num font-semibold text-tinta">{plata(cuotaMensual)}</span>
-                    /mes · faltan <span className="num">{plata(restanteTotal)}</span>
-                  </p>
-                )}
+        <div className="grid gap-6">
+          {debes.length > 0 && (
+            <section>
+              <h2 className="mb-3 text-lg">Debés</h2>
+              <div className="grid gap-5">
+                {debes.map((g) => (
+                  <GrupoDeudas
+                    key={`debes-${g.nombre}`}
+                    grupo={g}
+                    contexto="debes"
+                    onPagar={pagarCuota}
+                    onReactivar={reactivar}
+                  />
+                ))}
               </div>
-              <ul className="grid gap-3">
-                {mias.map((d) => {
-                  const acreedor =
-                    d.acreedor_tipo === 'interno'
-                      ? nombreDe(d.acreedor_profile)
-                      : d.acreedor_nombre
-                  const restante = Number(d.valor_cuota) * d.cuotas_restantes
-                  const pct = (d.cuota_actual / d.cantidad_cuotas) * 100
-                  return (
-                    <li key={d.id} className={`card p-4 ${d.activa ? '' : 'opacity-60'}`}>
-                      <div className="flex items-baseline justify-between gap-2">
-                        <p className="font-semibold">{d.descripcion}</p>
-                        <p className="num shrink-0 text-sm text-tinta-suave">
-                          {plataExacta(Number(d.valor_cuota))}/cuota
-                        </p>
-                      </div>
-                      <p className="mt-0.5 text-sm text-tinta-suave">
-                        le debe a {acreedor}
-                        {d.fecha_primera_cuota ? ` · desde ${fechaCorta(d.fecha_primera_cuota)}` : ''}
-                      </p>
-                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-birome-suave">
-                        <div
-                          className="h-full rounded-full bg-birome"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                      <div className="mt-2 flex items-center justify-between">
-                        <p className="text-sm">
-                          <span className="num font-semibold">
-                            {d.cuota_actual}/{d.cantidad_cuotas}
-                          </span>{' '}
-                          pagadas ·{' '}
-                          {d.activa ? (
-                            <>
-                              faltan <span className="num font-semibold">{plata(restante)}</span>
-                            </>
-                          ) : (
-                            <span className="font-semibold text-verde">saldada ✓</span>
-                          )}
-                        </p>
-                        {d.activa ? (
-                          <span className="flex items-center gap-2.5">
-                            {d.cuota_actual > 0 && (
-                              <button
-                                className="text-xs text-tinta-suave underline underline-offset-2"
-                                aria-label="Deshacer la última cuota pagada"
-                                onClick={() => reactivar(d)}
-                              >
-                                deshacer
-                              </button>
-                            )}
-                            <button className="btn btn-secundario !px-3 !py-1.5 !text-sm" onClick={() => pagarCuota(d)}>
-                              Pagué una cuota
-                            </button>
-                          </span>
-                        ) : (
-                          <button
-                            className="text-xs text-tinta-suave underline"
-                            onClick={() => reactivar(d)}
-                          >
-                            Deshacer
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
             </section>
-          ))}
+          )}
+          {teDeben.length > 0 && (
+            <section>
+              <h2 className="mb-3 text-lg">Te deben</h2>
+              <div className="grid gap-5">
+                {teDeben.map((g) => (
+                  <GrupoDeudas
+                    key={`tedeben-${g.nombre}`}
+                    grupo={g}
+                    contexto="te-deben"
+                    onPagar={pagarCuota}
+                    onReactivar={reactivar}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
 
@@ -197,25 +169,170 @@ export default function DeudasPage() {
   )
 }
 
+function GrupoDeudas({
+  grupo,
+  contexto,
+  onPagar,
+  onReactivar,
+}: {
+  grupo: GrupoDeuda
+  contexto: 'debes' | 'te-deben'
+  onPagar: (d: Deuda) => void
+  onReactivar: (d: Deuda) => void
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h3 className="font-semibold">{grupo.nombre}</h3>
+        {grupo.cuotaMensual > 0 && (
+          <p className="text-sm text-tinta-suave">
+            <span className="num font-semibold text-tinta">{plata(grupo.cuotaMensual)}</span>
+            /mes · faltan <span className="num">{plata(grupo.restante)}</span>
+          </p>
+        )}
+      </div>
+      <ul className="grid gap-3">
+        {grupo.deudas.map((d) => {
+          const restante = Number(d.valor_cuota) * d.cuotas_restantes
+          const pct = (d.cuota_actual / d.cantidad_cuotas) * 100
+          return (
+            <li key={d.id} className={`card p-4 ${d.activa ? '' : 'opacity-60'}`}>
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="font-semibold">{d.descripcion}</p>
+                <p className="num shrink-0 text-sm text-tinta-suave">
+                  {plataExacta(Number(d.valor_cuota))}/cuota
+                </p>
+              </div>
+              {d.fecha_primera_cuota && (
+                <p className="mt-0.5 text-sm text-tinta-suave">
+                  desde {fechaCorta(d.fecha_primera_cuota)}
+                </p>
+              )}
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-birome-suave">
+                <div className="h-full rounded-full bg-birome" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-sm">
+                  <span className="num font-semibold">
+                    {d.cuota_actual}/{d.cantidad_cuotas}
+                  </span>{' '}
+                  pagadas ·{' '}
+                  {d.activa ? (
+                    <>
+                      faltan <span className="num font-semibold">{plata(restante)}</span>
+                    </>
+                  ) : (
+                    <span className="font-semibold text-verde">saldada ✓</span>
+                  )}
+                </p>
+                {d.activa ? (
+                  <span className="flex items-center gap-2.5">
+                    {d.cuota_actual > 0 && (
+                      <button
+                        className="text-xs text-tinta-suave underline underline-offset-2"
+                        aria-label="Deshacer la última cuota pagada"
+                        onClick={() => onReactivar(d)}
+                      >
+                        deshacer
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-secundario !px-3 !py-1.5 !text-sm"
+                      onClick={() => onPagar(d)}
+                    >
+                      {contexto === 'debes' ? 'Pagué una cuota' : 'Me pagó una cuota'}
+                    </button>
+                  </span>
+                ) : (
+                  <button className="text-xs text-tinta-suave underline" onClick={() => onReactivar(d)}>
+                    Deshacer
+                  </button>
+                )}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+function SelectorTercero({
+  etiqueta,
+  nombresConocidos,
+  valor,
+  onChange,
+}: {
+  etiqueta: string
+  nombresConocidos: string[]
+  valor: string
+  onChange: (v: string) => void
+}) {
+  const [libre, setLibre] = useState(valor !== '' && !nombresConocidos.includes(valor))
+  return (
+    <div>
+      <p className="mb-1 text-sm font-medium">{etiqueta}</p>
+      <div className="flex flex-wrap gap-2">
+        {nombresConocidos.map((n) => (
+          <button
+            key={n}
+            type="button"
+            className="chip"
+            data-activo={!libre && valor === n}
+            onClick={() => {
+              setLibre(false)
+              onChange(n)
+            }}
+          >
+            {n}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="chip"
+          data-activo={libre}
+          onClick={() => {
+            setLibre(true)
+            onChange('')
+          }}
+        >
+          + Otro
+        </button>
+      </div>
+      {libre && (
+        <input
+          className="input mt-2"
+          placeholder="Nombre…"
+          value={valor}
+          onChange={(e) => onChange(e.target.value)}
+          autoFocus
+        />
+      )}
+    </div>
+  )
+}
+
 function NuevaDeudaForm({
   perfiles,
   userId,
+  nombresConocidos,
   onCreada,
 }: {
   perfiles: Profile[]
   userId: string | null
+  nombresConocidos: string[]
   onCreada: () => void
 }) {
   const supabase = createClient()
+  const [direccion, setDireccion] = useState<'debemos' | 'nos_deben'>('debemos')
   const [descripcion, setDescripcion] = useState('')
-  const [acreedorTipo, setAcreedorTipo] = useState<'externo' | 'interno'>('externo')
-  const [acreedorNombre, setAcreedorNombre] = useState('')
-  const [deudor, setDeudor] = useState(userId ?? '')
+  const [personaInterna, setPersonaInterna] = useState(userId ?? '')
+  const [terceroTipo, setTerceroTipo] = useState<'externo' | 'interno'>('externo')
+  const [terceroNombre, setTerceroNombre] = useState('')
   const [modoMonto, setModoMonto] = useState<'total' | 'cuota'>('total')
   const [montoTotal, setMontoTotal] = useState('')
   const [cuotas, setCuotas] = useState('')
   const [primeraCuota, setPrimeraCuota] = useState('')
-  // descuento de promo sobre el total: se guarda el neto
   const [conDescuento, setConDescuento] = useState(false)
   const [descuentoPct, setDescuentoPct] = useState('')
   const [topeReintegro, setTopeReintegro] = useState('')
@@ -223,15 +340,20 @@ function NuevaDeudaForm({
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (userId && !deudor) setDeudor(userId)
-  }, [userId, deudor])
+    if (userId && !personaInterna) setPersonaInterna(userId)
+  }, [userId, personaInterna])
 
-  const otro = perfiles.find((p) => p.id !== deudor)
+  const otro = perfiles.find((p) => p.id !== personaInterna)
 
-  // si se sabe el valor de la cuota, el total es cuota × cantidad de cuotas
   const ingresado = parsearMonto(montoTotal.trim()) ?? 0
   const nCuotas = parseInt(cuotas, 10) || 0
   const montoBase = modoMonto === 'cuota' ? ingresado * nCuotas : ingresado
+
+  function cambiarDireccion(d: 'debemos' | 'nos_deben') {
+    setDireccion(d)
+    setTerceroTipo('externo')
+    setTerceroNombre('')
+  }
 
   async function crear(e: React.FormEvent) {
     e.preventDefault()
@@ -249,22 +371,42 @@ function NuevaDeudaForm({
       if (!d) return setError('Poné el % de descuento (o destildá el descuento).')
       monto = d.neto
     }
-    if (acreedorTipo === 'externo' && !acreedorNombre.trim())
-      return setError('¿A quién se le debe?')
-    if (acreedorTipo === 'interno' && !otro)
+    if (terceroTipo === 'externo' && !terceroNombre.trim())
+      return setError(direccion === 'debemos' ? '¿A quién se le debe?' : '¿Quién debe?')
+    if (terceroTipo === 'interno' && !otro)
       return setError('Todavía no está el perfil de la otra persona.')
 
-    setGuardando(true)
-    const { data: creada, error } = await supabase.from('deudas').insert({
+    const datos: Record<string, unknown> = {
       descripcion: descripcion.trim(),
-      acreedor_tipo: acreedorTipo,
-      acreedor_nombre: acreedorTipo === 'externo' ? acreedorNombre.trim() : null,
-      acreedor_profile: acreedorTipo === 'interno' ? otro?.id : null,
-      deudor,
       monto_total: monto,
       cantidad_cuotas: n,
       fecha_primera_cuota: primeraCuota || null,
-    }).select('id').single()
+    }
+    if (direccion === 'debemos') {
+      datos.deudor = personaInterna
+      datos.acreedor_tipo = terceroTipo
+      datos.acreedor_nombre = terceroTipo === 'externo' ? terceroNombre.trim() : null
+      datos.acreedor_profile = terceroTipo === 'interno' ? otro?.id ?? null : null
+    } else {
+      datos.acreedor_tipo = 'interno'
+      datos.acreedor_profile = personaInterna
+      datos.acreedor_nombre = null
+      if (terceroTipo === 'interno') {
+        datos.deudor = otro?.id ?? null
+      } else {
+        // requiere migración v3 (deudor_tipo / deudor_nombre / deudor nulable)
+        datos.deudor = null
+        datos.deudor_tipo = 'externo'
+        datos.deudor_nombre = terceroNombre.trim()
+      }
+    }
+
+    setGuardando(true)
+    const { data: creada, error } = await supabase
+      .from('deudas')
+      .insert(datos)
+      .select('id')
+      .single()
     setGuardando(false)
     if (error) setError(error.message)
     else {
@@ -275,47 +417,99 @@ function NuevaDeudaForm({
 
   return (
     <form onSubmit={crear} className="card mb-4 grid gap-3 border-birome p-4">
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          className="chip text-center"
+          data-activo={direccion === 'debemos'}
+          onClick={() => cambiarDireccion('debemos')}
+        >
+          Debemos
+        </button>
+        <button
+          type="button"
+          className="chip text-center"
+          data-activo={direccion === 'nos_deben'}
+          onClick={() => cambiarDireccion('nos_deben')}
+        >
+          Nos deben
+        </button>
+      </div>
+
       <input
         className="input"
-        placeholder="Qué se compró (ej: Zapatillas Vans)"
+        placeholder="Qué es (ej: Zapatillas Vans, Expensas…)"
         value={descripcion}
         onChange={(e) => setDescripcion(e.target.value)}
       />
-      <div className="grid grid-cols-2 gap-2">
-        <button type="button" className="chip text-center" data-activo={acreedorTipo === 'externo'} onClick={() => setAcreedorTipo('externo')}>
-          A un tercero
-        </button>
-        <button type="button" className="chip text-center" data-activo={acreedorTipo === 'interno'} onClick={() => setAcreedorTipo('interno')}>
-          Entre nosotros
-        </button>
-      </div>
-      {acreedorTipo === 'externo' ? (
-        <input
-          className="input"
-          placeholder="¿A quién? (Seba, Papá, Natasha…)"
-          value={acreedorNombre}
-          onChange={(e) => setAcreedorNombre(e.target.value)}
-        />
-      ) : (
-        <p className="text-sm text-tinta-suave">
-          Acreedor: <span className="font-semibold">{otro?.nombre ?? '—'}</span>
-        </p>
-      )}
+
       <div>
-        <p className="mb-1 text-sm font-medium">¿Quién la paga?</p>
+        <p className="mb-1 text-sm font-medium">
+          {direccion === 'debemos' ? '¿Quién de los dos debe?' : '¿A quién de los dos le deben?'}
+        </p>
         <div className="grid grid-cols-2 gap-2">
           {perfiles.map((p) => (
-            <button key={p.id} type="button" className="chip text-center" data-activo={deudor === p.id} onClick={() => setDeudor(p.id)}>
+            <button
+              key={p.id}
+              type="button"
+              className="chip text-center"
+              data-activo={personaInterna === p.id}
+              onClick={() => setPersonaInterna(p.id)}
+            >
               {p.nombre}
             </button>
           ))}
         </div>
       </div>
+
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" className="chip text-center" data-activo={modoMonto === 'total'} onClick={() => setModoMonto('total')}>
+        <button
+          type="button"
+          className="chip text-center"
+          data-activo={terceroTipo === 'externo'}
+          onClick={() => setTerceroTipo('externo')}
+        >
+          {direccion === 'debemos' ? 'A un tercero' : 'Un tercero'}
+        </button>
+        <button
+          type="button"
+          className="chip text-center"
+          data-activo={terceroTipo === 'interno'}
+          onClick={() => setTerceroTipo('interno')}
+        >
+          Entre nosotros
+        </button>
+      </div>
+
+      {terceroTipo === 'externo' ? (
+        <SelectorTercero
+          etiqueta={direccion === 'debemos' ? '¿A quién?' : '¿Quién debe?'}
+          nombresConocidos={nombresConocidos}
+          valor={terceroNombre}
+          onChange={setTerceroNombre}
+        />
+      ) : (
+        <p className="text-sm text-tinta-suave">
+          {direccion === 'debemos' ? 'Acreedor' : 'Deudor'}:{' '}
+          <span className="font-semibold">{otro?.nombre ?? '—'}</span>
+        </p>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          className="chip text-center"
+          data-activo={modoMonto === 'total'}
+          onClick={() => setModoMonto('total')}
+        >
           Sé el total
         </button>
-        <button type="button" className="chip text-center" data-activo={modoMonto === 'cuota'} onClick={() => setModoMonto('cuota')}>
+        <button
+          type="button"
+          className="chip text-center"
+          data-activo={modoMonto === 'cuota'}
+          onClick={() => setModoMonto('cuota')}
+        >
           Sé el valor de la cuota
         </button>
       </div>
@@ -353,7 +547,13 @@ function NuevaDeudaForm({
         <label className="mb-1 block text-sm font-medium" htmlFor="primera">
           Primera cuota (opcional)
         </label>
-        <input id="primera" type="date" className="input" value={primeraCuota} onChange={(e) => setPrimeraCuota(e.target.value)} />
+        <input
+          id="primera"
+          type="date"
+          className="input"
+          value={primeraCuota}
+          onChange={(e) => setPrimeraCuota(e.target.value)}
+        />
       </div>
       <button className="btn btn-primario" disabled={guardando}>
         {guardando ? 'Creando…' : 'Crear deuda'}

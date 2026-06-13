@@ -104,8 +104,9 @@ export function calcularBalance(
 
 /**
  * Balance de las "cuotas entre ustedes": deudas activas con
- * acreedor_tipo 'interno' (le deben al otro miembro de la pareja). La
- * cuota de este mes (valor_cuota) de cada una cuenta como si el
+ * acreedor_tipo 'interno' Y deudor_tipo 'interno' (le deben al otro
+ * miembro de la pareja, y quien debe es Mati o Vicky — no un tercero).
+ * La cuota de este mes (valor_cuota) de cada una cuenta como si el
  * acreedor la hubiera puesto de más, mismo signo que calcularBalance.
  */
 export function calcularBalanceCuotasInternas(
@@ -113,6 +114,7 @@ export function calcularBalanceCuotasInternas(
     activa: boolean
     acreedor_tipo: string
     acreedor_profile: string | null
+    deudor_tipo?: string
     valor_cuota: number
   }[],
   perfiles: { id: string }[]
@@ -120,6 +122,7 @@ export function calcularBalanceCuotasInternas(
   const pusoDeMas = new Map<string, number>(perfiles.map((p) => [p.id, 0]))
   for (const d of deudas) {
     if (!d.activa || d.acreedor_tipo !== 'interno' || !d.acreedor_profile) continue
+    if (d.deudor_tipo === 'externo') continue
     pusoDeMas.set(
       d.acreedor_profile,
       (pusoDeMas.get(d.acreedor_profile) ?? 0) + Number(d.valor_cuota)

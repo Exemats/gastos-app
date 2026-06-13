@@ -24,7 +24,12 @@ export type Deuda = {
   acreedor_tipo: 'externo' | 'interno'
   acreedor_nombre: string | null
   acreedor_profile: string | null
-  deudor: string
+  /** 'interno' = debe Mati o Vicky (deudor = su uuid); 'externo' = debe un
+   * tercero (deudor_nombre). Si falta (sin migración v3), tratar como 'interno'. */
+  deudor_tipo?: 'externo' | 'interno'
+  deudor: string | null
+  /** Si deudor_tipo = 'externo': nombre de quien te debe. */
+  deudor_nombre?: string | null
   monto_total: number
   cantidad_cuotas: number
   cuota_actual: number
@@ -43,11 +48,15 @@ export type GastoFijo = {
   activo: boolean
   /** Cómo se divide: 0.5 = mitad y mitad; null = porcentaje del perfil. */
   prop_pagador?: number | null
-  /** Si lo paga un tercero (ej: 'Seba'): al cargarlo no se crea un movimiento
-   * sino una deuda con ese tercero por la parte de quien carga. */
+  /** Si lo paga un tercero (ej: 'Seba'): al cargarlo se anota igual el
+   * movimiento (gasto del depto) y además una deuda con ese tercero por
+   * la parte de quien queda debiéndole (tercero_deudor). */
   paga_tercero?: string | null
   /** Parte que se le debe al tercero (null = la mitad). */
   prop_tercero?: number | null
+  /** Quién le queda debiendo esa parte al tercero, sin importar quién
+   * cargue el gasto. null = quien carga. */
+  tercero_deudor?: string | null
 }
 
 /** Mes 'tachado': la división de ese mes ya se transfirió. */

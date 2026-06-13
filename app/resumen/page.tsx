@@ -16,6 +16,14 @@ import {
 } from '@/lib/format'
 import { sinAcentos, parsearMonto } from '@/lib/parsear-gasto'
 import type { Deuda, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
+import {
+  agruparDeudas,
+  deudasQueDebes,
+  deudasQueTeDeben,
+  etiquetaAcreedor,
+  etiquetaDeudor,
+  type GrupoDeuda,
+} from '@/lib/deudas'
 import Nav from '@/components/Nav'
 import TacharMes from '@/components/TacharMes'
 import EditarMovimiento from '@/components/EditarMovimiento'
@@ -125,21 +133,15 @@ export default function ResumenPage() {
   }, [compMes])
   const maxCategoria = porCategoria[0]?.[1] ?? 1
 
-  // --- deudas activas por persona (estado actual, no depende del mes) ---
-  const porDeudor = useMemo(
-    () =>
-      perfiles
-        .map((p) => {
-          const mias = deudas.filter((d) => d.deudor === p.id)
-          return {
-            perfil: p,
-            deudas: mias,
-            cuotaMensual: mias.reduce((a, d) => a + Number(d.valor_cuota), 0),
-            restante: mias.reduce((a, d) => a + Number(d.valor_cuota) * d.cuotas_restantes, 0),
-          }
-        })
-        .filter((x) => x.deudas.length > 0),
-    [perfiles, deudas]
+  // --- deudas activas, agrupadas igual que en /deudas (estado actual,
+  // no depende del mes): lo que debés vos, y lo que te deben a vos ---
+  const debes = useMemo(
+    () => agruparDeudas(deudasQueDebes(deudas, userId), (d) => etiquetaAcreedor(d, perfiles)),
+    [deudas, userId, perfiles]
+  )
+  const teDeben = useMemo(
+    () => agruparDeudas(deudasQueTeDeben(deudas, userId), (d) => etiquetaDeudor(d, perfiles)),
+    [deudas, userId, perfiles]
   )
 
   // --- cierre del mes: neto real a transferir (incluye ajustes viejos) ---
@@ -153,7 +155,10 @@ export default function ResumenPage() {
   // este mes es la 3ra fuente de saldo (junto con gastos del depto y
   // préstamos), solo aplica al mes en curso, igual que en el dashboard ---
   const cuotasInternasActivas = useMemo(
-    () => deudas.filter((d) => d.acreedor_tipo === 'interno'),
+    () =>
+      deudas.filter(
+        (d) => d.acreedor_tipo === 'interno' && (d.deudor_tipo ?? 'interno') === 'interno'
+      ),
     [deudas]
   )
   const balanceCuotasInternas = useMemo(
@@ -404,10 +409,13 @@ export default function ResumenPage() {
         else lineas.push('*→ A mano ✓*')
       }
     }
-    if (porDeudor.length > 0) {
+    if (debes.length > 0 || teDeben.length > 0) {
       lineas.push('', 'Cuotas activas:')
-      for (const { perfil, cuotaMensual, restante } of porDeudor) {
-        lineas.push(`· ${perfil.nombre}: ${plata(cuotaMensual)}/mes (faltan ${plata(restante)})`)
+      for (const g of debes) {
+        lineas.push(`· Debés a ${g.nombre}: ${plata(g.cuotaMensual)}/mes (faltan ${plata(g.restante)})`)
+      }
+      for (const g of teDeben) {
+        lineas.push(`· Te debe ${g.nombre}: ${plata(g.cuotaMensual)}/mes (faltan ${plata(g.restante)})`)
       }
     }
     try {
@@ -643,7 +651,7 @@ export default function ResumenPage() {
               </button>
             </section>
 
-            {/* Deudas por persona */}
+            {/* Deudas en cuotas */}
             <section className="card mb-4 p-4">
               <div className="flex items-baseline justify-between">
                 <h2 className="text-lg">Deudas en cuotas</h2>
@@ -651,48 +659,30 @@ export default function ResumenPage() {
                   Administrar
                 </Link>
               </div>
-              {porDeudor.length === 0 ? (
+              {debes.length === 0 && teDeben.length === 0 ? (
                 <p className="mt-2 text-sm text-tinta-suave">No hay deudas activas. 🎉</p>
               ) : (
-                <div className="mt-3 grid gap-3">
-                  {porDeudor.map(({ perfil, deudas: lista, cuotaMensual, restante }) => (
-                    <div key={perfil.id}>
-                      <div className="flex items-baseline justify-between">
-                        <p className="font-semibold">
-                          {perfil.nombre}
-                          {perfil.id === userId ? ' (vos)' : ''}
-                        </p>
-                        <p className="text-sm text-tinta-suave">
-                          <span className="num font-semibold text-tinta">
-                            {plata(cuotaMensual)}
-                          </span>
-                          /mes · faltan <span className="num">{plata(restante)}</span>
-                        </p>
-                      </div>
-                      <ul className="mt-1.5 grid gap-1">
-                        {lista.map((d) => (
-                          <li
-                            key={d.id}
-                            className="flex items-baseline justify-between rounded-lg bg-birome-suave/40 px-3 py-1.5 text-sm"
-                          >
-                            <span className="min-w-0 truncate">
-                              {d.descripcion}
-                              <span className="text-tinta-suave">
-                                {' '}
-                                → {d.acreedor_tipo === 'interno'
-                                  ? nombreDe(d.acreedor_profile ?? '')
-                                  : d.acreedor_nombre}
-                              </span>
-                            </span>
-                            <span className="num shrink-0 pl-2 text-tinta-suave">
-                              {d.cuota_actual}/{d.cantidad_cuotas} ·{' '}
-                              {plataExacta(Number(d.valor_cuota))}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
+                <div className="mt-3 grid gap-4">
+                  {debes.length > 0 && (
+                    <div className="grid gap-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-tinta-suave">
+                        Debés
+                      </p>
+                      {debes.map((g) => (
+                        <GrupoDeudasResumen key={`debes-${g.nombre}`} grupo={g} />
+                      ))}
                     </div>
-                  ))}
+                  )}
+                  {teDeben.length > 0 && (
+                    <div className="grid gap-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-tinta-suave">
+                        Te deben
+                      </p>
+                      {teDeben.map((g) => (
+                        <GrupoDeudasResumen key={`tedeben-${g.nombre}`} grupo={g} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -1086,5 +1076,34 @@ export default function ResumenPage() {
       )}
       <Nav />
     </main>
+  )
+}
+
+function GrupoDeudasResumen({ grupo }: { grupo: GrupoDeuda }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <p className="font-semibold">{grupo.nombre}</p>
+        {grupo.cuotaMensual > 0 && (
+          <p className="text-sm text-tinta-suave">
+            <span className="num font-semibold text-tinta">{plata(grupo.cuotaMensual)}</span>
+            /mes · faltan <span className="num">{plata(grupo.restante)}</span>
+          </p>
+        )}
+      </div>
+      <ul className="mt-1.5 grid gap-1">
+        {grupo.deudas.map((d) => (
+          <li
+            key={d.id}
+            className="flex items-baseline justify-between rounded-lg bg-birome-suave/40 px-3 py-1.5 text-sm"
+          >
+            <span className="min-w-0 truncate">{d.descripcion}</span>
+            <span className="num shrink-0 pl-2 text-tinta-suave">
+              {d.cuota_actual}/{d.cantidad_cuotas} · {plataExacta(Number(d.valor_cuota))}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

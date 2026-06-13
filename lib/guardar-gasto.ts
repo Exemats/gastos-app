@@ -29,7 +29,7 @@ export type DatosGasto = {
 }
 
 export type ResultadoGuardar =
-  | { ok: true; clase: 'movimiento' | 'deuda'; id: string }
+  | { ok: true; clase: 'movimiento' | 'deuda'; id: string; deudaId?: string }
   | { ok: false; error: string }
 
 /**
@@ -84,24 +84,43 @@ export async function guardarGasto(
     return { ok: true, clase: 'movimiento', id: data.id }
   }
 
-  // Lo paga un tercero (Expensas → Seba): no es un movimiento, es deuda
+  // Lo paga un tercero (Expensas → Seba): se anota igual el gasto del
+  // depto (entra al saldo y a las estadísticas como cualquier servicio)
+  // y además la parte de quien le queda debiendo (tercero_deudor, o
+  // quien carga si no está fijado) se anota como deuda con el tercero.
   if (!gasto.esPersonal && fijo?.paga_tercero) {
-    const { data, error } = await supabase
+    const { data: mov, error } = await supabase
+      .from('movimientos')
+      .insert({
+        tipo: gasto.tipo,
+        fecha: gasto.fecha,
+        descripcion: gasto.descripcion,
+        monto: gasto.monto,
+        pagado_por: gasto.pagadorId,
+        categoria: gasto.categoria ?? 'servicios',
+        prop_pagador: gasto.prop !== undefined ? gasto.prop : propPagador(gasto),
+      })
+      .select('id')
+      .single()
+    if (error) return { ok: false, error: error.message }
+    avisar({ tipo: 'gasto', id: mov.id })
+
+    const { data: deuda, error: errorDeuda } = await supabase
       .from('deudas')
       .insert({
         descripcion: gasto.descripcion,
         acreedor_tipo: 'externo',
         acreedor_nombre: fijo.paga_tercero,
-        deudor: gasto.pagadorId,
+        deudor: fijo.tercero_deudor ?? gasto.pagadorId,
         monto_total: parteTercero(gasto.monto, fijo),
         cantidad_cuotas: 1,
         fecha_primera_cuota: gasto.fecha,
       })
       .select('id')
       .single()
-    if (error) return { ok: false, error: error.message }
-    avisar({ tipo: 'deuda', id: data.id })
-    return { ok: true, clase: 'deuda', id: data.id }
+    if (errorDeuda) return { ok: false, error: errorDeuda.message }
+    avisar({ tipo: 'deuda', id: deuda.id })
+    return { ok: true, clase: 'movimiento', id: mov.id, deudaId: deuda.id }
   }
 
   const { data, error } = await supabase
