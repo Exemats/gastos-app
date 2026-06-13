@@ -89,6 +89,7 @@ export default function DeudasPage() {
   ]
 
   const hayDeudas = debes.length > 0 || teDeben.length > 0
+  const totalTeDeben = teDeben.reduce((a, g) => a + g.restante, 0)
 
   return (
     <main className="mx-auto max-w-md px-4 pb-28 pt-6 lg:max-w-2xl">
@@ -122,7 +123,31 @@ export default function DeudasPage() {
           anotalo acá.
         </div>
       ) : (
-        <div className="grid gap-6">
+        <div className="grid gap-5">
+          {teDeben.length > 0 && (
+            <details className="card group p-4" open={debes.length === 0}>
+              <summary className="flex cursor-pointer list-none items-center justify-between">
+                <span className="font-semibold">Te deben</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="num font-semibold text-verde">{plata(totalTeDeben)}</span>
+                  <span className="text-tinta-suave transition-transform group-open:rotate-180">
+                    ▾
+                  </span>
+                </span>
+              </summary>
+              <div className="mt-4 grid gap-5">
+                {teDeben.map((g) => (
+                  <GrupoDeudas
+                    key={`tedeben-${g.nombre}`}
+                    grupo={g}
+                    contexto="te-deben"
+                    onPagar={pagarCuota}
+                    onReactivar={reactivar}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
           {debes.length > 0 && (
             <section>
               <h2 className="mb-3 text-lg">Debés</h2>
@@ -132,22 +157,6 @@ export default function DeudasPage() {
                     key={`debes-${g.nombre}`}
                     grupo={g}
                     contexto="debes"
-                    onPagar={pagarCuota}
-                    onReactivar={reactivar}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-          {teDeben.length > 0 && (
-            <section>
-              <h2 className="mb-3 text-lg">Te deben</h2>
-              <div className="grid gap-5">
-                {teDeben.map((g) => (
-                  <GrupoDeudas
-                    key={`tedeben-${g.nombre}`}
-                    grupo={g}
-                    contexto="te-deben"
                     onPagar={pagarCuota}
                     onReactivar={reactivar}
                   />
@@ -191,64 +200,72 @@ function GrupoDeudas({
           </p>
         )}
       </div>
-      <ul className="grid gap-3">
+      <ul className="grid gap-2">
         {grupo.deudas.map((d) => {
           const restante = Number(d.valor_cuota) * d.cuotas_restantes
           const pct = (d.cuota_actual / d.cantidad_cuotas) * 100
           return (
-            <li key={d.id} className={`card p-4 ${d.activa ? '' : 'opacity-60'}`}>
+            <li key={d.id} className={`card p-3 ${d.activa ? '' : 'opacity-60'}`}>
               <div className="flex items-baseline justify-between gap-2">
-                <p className="font-semibold">{d.descripcion}</p>
+                <p className="min-w-0 truncate font-semibold">{d.descripcion}</p>
                 <p className="num shrink-0 text-sm text-tinta-suave">
-                  {plataExacta(Number(d.valor_cuota))}/cuota
+                  {plataExacta(Number(d.valor_cuota))}
                 </p>
               </div>
-              {d.fecha_primera_cuota && (
-                <p className="mt-0.5 text-sm text-tinta-suave">
-                  desde {fechaCorta(d.fecha_primera_cuota)}
-                </p>
-              )}
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-birome-suave">
-                <div className="h-full rounded-full bg-birome" style={{ width: `${pct}%` }} />
-              </div>
-              <div className="mt-2 flex items-center justify-between">
+              <div className="mt-1 flex items-center justify-between gap-2">
                 <p className="text-sm">
                   <span className="num font-semibold">
                     {d.cuota_actual}/{d.cantidad_cuotas}
                   </span>{' '}
-                  pagadas ·{' '}
                   {d.activa ? (
                     <>
-                      faltan <span className="num font-semibold">{plata(restante)}</span>
+                      · faltan <span className="num font-semibold">{plata(restante)}</span>
                     </>
                   ) : (
-                    <span className="font-semibold text-verde">saldada ✓</span>
+                    <span className="font-semibold text-verde">· saldada ✓</span>
                   )}
                 </p>
-                {d.activa ? (
-                  <span className="flex items-center gap-2.5">
-                    {d.cuota_actual > 0 && (
-                      <button
-                        className="text-xs text-tinta-suave underline underline-offset-2"
-                        aria-label="Deshacer la última cuota pagada"
-                        onClick={() => onReactivar(d)}
-                      >
-                        deshacer
-                      </button>
-                    )}
-                    <button
-                      className="btn btn-secundario !px-3 !py-1.5 !text-sm"
-                      onClick={() => onPagar(d)}
-                    >
-                      {contexto === 'debes' ? 'Pagué una cuota' : 'Me pagó una cuota'}
-                    </button>
-                  </span>
-                ) : (
-                  <button className="text-xs text-tinta-suave underline" onClick={() => onReactivar(d)}>
-                    Deshacer
+                {d.activa && (
+                  <button
+                    className="btn btn-secundario shrink-0 !px-3 !py-1.5 !text-sm"
+                    onClick={() => onPagar(d)}
+                  >
+                    {contexto === 'debes' ? 'Pagué' : 'Me pagó'}
                   </button>
                 )}
               </div>
+              <details className="group/detalle mt-1.5">
+                <summary className="cursor-pointer list-none text-xs text-tinta-suave underline underline-offset-2">
+                  Detalles{' '}
+                  <span className="inline-block transition-transform group-open/detalle:rotate-180">
+                    ▾
+                  </span>
+                </summary>
+                <div className="mt-2 grid gap-2">
+                  {d.fecha_primera_cuota && (
+                    <p className="text-xs text-tinta-suave">
+                      desde {fechaCorta(d.fecha_primera_cuota)}
+                    </p>
+                  )}
+                  {d.activa && (
+                    <div className="h-2 overflow-hidden rounded-full bg-birome-suave">
+                      <div
+                        className="h-full rounded-full bg-birome"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  )}
+                  {d.cuota_actual > 0 && (
+                    <button
+                      className="justify-self-start text-xs text-tinta-suave underline underline-offset-2"
+                      aria-label="Deshacer la última cuota pagada"
+                      onClick={() => onReactivar(d)}
+                    >
+                      Deshacer la última cuota
+                    </button>
+                  )}
+                </div>
+              </details>
             </li>
           )
         })}
