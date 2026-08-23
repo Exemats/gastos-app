@@ -1,5 +1,5 @@
 'use client'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -11,8 +11,6 @@ import {
   fechaCorta,
   hoyISO,
   mesShift,
-  calcularBalance,
-  calcularBalanceCuotasInternas,
 } from '@/lib/format'
 import { sinAcentos, parsearMonto } from '@/lib/parsear-gasto'
 import type { Deuda, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
@@ -24,6 +22,7 @@ import {
   etiquetaDeudor,
   type GrupoDeuda,
 } from '@/lib/deudas'
+import { calcularAuditoria, etiquetaOrigenProp, origenProp } from '@/lib/auditoria'
 import Nav from '@/components/Nav'
 import TacharMes from '@/components/TacharMes'
 import EditarMovimiento from '@/components/EditarMovimiento'
@@ -102,26 +101,6 @@ export default function ResumenPage() {
   const totalComp = compMes.reduce((a, m) => a + Number(m.monto), 0)
   const totalPersonal = personalesMes.reduce((a, m) => a + Number(m.monto), 0)
 
-  // --- lo compartido, persona por persona: pagó / su parte / neto del mes ---
-  const porPersona = useMemo(() => {
-    const porId = new Map(perfiles.map((p) => [p.id, p]))
-    return perfiles.map((p) => {
-      let pago = 0
-      let suParte = 0
-      for (const m of compMes) {
-        const monto = Number(m.monto)
-        const prop = Number(m.prop_pagador ?? porId.get(m.pagado_por)?.porcentaje ?? 0.5)
-        if (m.pagado_por === p.id) {
-          pago += monto
-          suParte += monto * prop
-        } else {
-          suParte += monto * (1 - prop)
-        }
-      }
-      return { perfil: p, pago, suParte, neto: pago - suParte }
-    })
-  }, [perfiles, compMes])
-
   // --- categorías del mes ---
   const porCategoria = useMemo(() => {
     const acc = new Map<string, number>()
@@ -144,16 +123,13 @@ export default function ResumenPage() {
     [deudas, userId, perfiles]
   )
 
-  // --- cierre del mes: neto real a transferir (incluye ajustes viejos) ---
-  const compartidosMes = useMemo(
-    () => movsMes.filter((m) => !m.es_personal),
-    [movsMes]
-  )
   const esMesActual = mes === hoyISO().slice(0, 7)
 
   // --- cuotas "entre ustedes": deudas activas tipo 'interno'. Su cuota de
   // este mes es la 3ra fuente de saldo (junto con gastos del depto y
-  // préstamos), solo aplica al mes en curso, igual que en el dashboard ---
+  // préstamos); solo suma al neto del mes EN CURSO porque no está atada
+  // a una fecha del mes sino a "cuánto toca pagar ahora" (ver incluyeCuotas
+  // en lib/auditoria.ts) ---
   const cuotasInternasActivas = useMemo(
     () =>
       deudas.filter(
@@ -161,45 +137,29 @@ export default function ResumenPage() {
       ),
     [deudas]
   )
-  const balanceCuotasInternas = useMemo(
-    () => calcularBalanceCuotasInternas(deudas, perfiles),
-    [deudas, perfiles]
-  )
 
-  const cierre = useMemo(() => {
+  // --- el desglose auditable del mes: única fuente de verdad de cómo se
+  // llega al neto (gastos del depto + préstamos + cuotas entre ustedes) ---
+  const auditoria = useMemo(() => {
     if (perfiles.length !== 2) return null
     const [p1, p2] = perfiles
-    const puso = calcularBalance(compartidosMes, perfiles)
-    let diff = (puso.get(p1.id) ?? 0) - (puso.get(p2.id) ?? 0)
-    if (esMesActual) {
-      diff += (balanceCuotasInternas.get(p1.id) ?? 0) - (balanceCuotasInternas.get(p2.id) ?? 0)
-    }
+    return calcularAuditoria(compMes, ajustesMes, cuotasInternasActivas, p1, p2, esMesActual)
+  }, [perfiles, compMes, ajustesMes, cuotasInternasActivas, esMesActual])
+
+  const cierre = useMemo(() => {
+    if (!auditoria) return null
     return {
-      deudor: diff > 0 ? p2 : p1,
-      acreedor: diff > 0 ? p1 : p2,
-      monto: Math.abs(diff),
+      deudor: auditoria.deudor,
+      acreedor: auditoria.acreedor,
+      monto: auditoria.monto,
       saldado: saldados.find((s) => s.mes === mes) ?? null,
     }
-  }, [perfiles, compartidosMes, saldados, mes, esMesActual, balanceCuotasInternas])
+  }, [auditoria, saldados, mes])
 
-  // --- desglose de las 3 fuentes de saldo del mes en curso ---
-  const desglose = useMemo(() => {
-    if (perfiles.length !== 2 || !esMesActual) return null
-    const [p1, p2] = perfiles
-    const depto = calcularBalance(compMes, perfiles)
-    const prestamos = calcularBalance(ajustesMes, perfiles)
-    return {
-      p1,
-      p2,
-      diffDepto: (depto.get(p1.id) ?? 0) - (depto.get(p2.id) ?? 0),
-      diffPrestamos: (prestamos.get(p1.id) ?? 0) - (prestamos.get(p2.id) ?? 0),
-      diffCuotas:
-        (balanceCuotasInternas.get(p1.id) ?? 0) - (balanceCuotasInternas.get(p2.id) ?? 0),
-    }
-  }, [perfiles, compMes, ajustesMes, balanceCuotasInternas, esMesActual])
-
+  // hay algo para desglosar línea por línea (aunque sea una sola fuente)
   const hayDesglose = Boolean(
-    desglose && (ajustesMes.length > 0 || cuotasInternasActivas.length > 0)
+    auditoria &&
+      (compMes.length > 0 || ajustesMes.length > 0 || cuotasInternasActivas.length > 0)
   )
 
   async function destachar() {
@@ -335,18 +295,18 @@ export default function ResumenPage() {
     )
   }
 
-  const etiquetaDivision = (m: Movimiento) =>
-    m.es_personal
-      ? '🔒 personal'
-      : m.categoria === 'ajuste'
-        ? 'saldo'
-        : m.prop_pagador == null
-          ? 'partes'
-          : Number(m.prop_pagador) === 0.5
-            ? 'mitad'
-            : Number(m.prop_pagador) === 1
-              ? '100% pagador'
-              : `${Math.round(Number(m.prop_pagador) * 100)}% pagador`
+  const etiquetaDivision = (m: Movimiento) => {
+    if (m.es_personal) return '🔒 personal'
+    if (m.categoria === 'ajuste') return 'saldo'
+    const o = origenProp(m, perfiles)
+    if (o.tipo === 'partes') return 'partes'
+    if (o.tipo === 'mitad') return 'mitad'
+    if (o.tipo === 'pagador') return '100% pagador'
+    const prop = Number(
+      m.prop_pagador ?? perfiles.find((p) => p.id === m.pagado_por)?.porcentaje ?? 0.5
+    )
+    return `${Math.round(prop * 100)}% pagador`
+  }
 
   function exportarCSV() {
     const filas = visibles.map((m) => [
@@ -378,26 +338,28 @@ export default function ResumenPage() {
     const titulo = nombreMes(mes)
     const lineas = [`📒 *${titulo.charAt(0).toUpperCase() + titulo.slice(1)}* — La libreta`, '']
     lineas.push(`Compartido: ${plata(totalComp)} (${compMes.length} movimientos)`)
-    for (const { perfil, pago, suParte } of porPersona) {
+    for (const { perfil, pago, suParte } of auditoria?.porPersonaGastos ?? []) {
       lineas.push(`· ${perfil.nombre} pagó ${plata(pago)} · su parte ${plata(suParte)}`)
     }
     if (cierre) {
       if (cierre.saldado) {
         lineas.push('', `*✓ Saldado el ${fechaCorta(cierre.saldado.created_at)}*`)
       } else {
-        if (desglose && hayDesglose) {
-          lineas.push('', 'Saldo del mes:')
+        if (auditoria && hayDesglose) {
+          lineas.push('', 'Cómo se calculó:')
           lineas.push(
-            `· Gastos del depto: ${lineaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}`
+            `· Gastos del depto: ${lineaSaldo(auditoria.diffGastos, auditoria.p1, auditoria.p2)}`
           )
           if (ajustesMes.length > 0) {
             lineas.push(
-              `· Préstamos: ${lineaSaldo(desglose.diffPrestamos, desglose.p1, desglose.p2)}`
+              `· Préstamos: ${lineaSaldo(auditoria.diffAjustes, auditoria.p1, auditoria.p2)}`
             )
           }
           if (cuotasInternasActivas.length > 0) {
             lineas.push(
-              `· Cuotas entre ustedes: ${lineaSaldo(desglose.diffCuotas, desglose.p1, desglose.p2)}`
+              esMesActual
+                ? `· Cuotas entre ustedes: ${lineaSaldo(auditoria.diffCuotas, auditoria.p1, auditoria.p2)}`
+                : '· Cuotas entre ustedes: no suman este mes (son las vigentes hoy)'
             )
           }
         }
@@ -511,7 +473,7 @@ export default function ResumenPage() {
                 <p className="mt-2 text-sm text-tinta-suave">Sin gastos compartidos este mes.</p>
               ) : (
                 <div className="mt-3 grid gap-2">
-                  {porPersona.map(({ perfil, pago, suParte, neto }) => (
+                  {(auditoria?.porPersonaGastos ?? []).map(({ perfil, pago, suParte, neto }) => (
                     <div key={perfil.id} className="rounded-lg bg-birome-suave/60 p-3">
                       <div className="flex items-baseline justify-between">
                         <p className="font-semibold">
@@ -553,38 +515,109 @@ export default function ResumenPage() {
               {/* Cierre del mes: a principio del mes siguiente se transfiere y se tacha */}
               {cierre &&
                 hayTachado &&
-                (compartidosMes.length > 0 ||
+                (compMes.length > 0 ||
+                  ajustesMes.length > 0 ||
                   cierre.saldado ||
                   (esMesActual && cuotasInternasActivas.length > 0)) && (
                 <div className="mt-4 border-t border-linea pt-3 text-sm">
-                  {desglose && hayDesglose && (
+                  {auditoria && hayDesglose && (
                     <div className="mb-3">
                       <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-tinta-suave">
-                        Saldo del mes, por fuente
+                        Cómo se calculó
                       </p>
-                      <div className="divide-y divide-linea rounded-lg border border-linea px-3">
-                        <div className="flex items-baseline justify-between gap-2 py-2">
-                          <span className="text-tinta-suave">Gastos del depto</span>
-                          <span className="text-right">
-                            {filaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}
-                          </span>
-                        </div>
+                      <div className="grid gap-1 rounded-lg border border-linea p-3">
+                        <FuenteAuditoria
+                          titulo="Gastos del depto"
+                          resumen={filaSaldo(auditoria.diffGastos, auditoria.p1, auditoria.p2)}
+                        >
+                          {auditoria.gastos.length === 0 ? (
+                            <li className="py-1 text-xs text-tinta-suave">Ninguno este mes.</li>
+                          ) : (
+                            auditoria.gastos.map((g) => (
+                              <li
+                                key={g.mov.id}
+                                className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                              >
+                                <span className="min-w-0 truncate">
+                                  {g.mov.descripcion}{' '}
+                                  <span className="text-tinta-suave">
+                                    · pagó {g.pagador.nombre}
+                                  </span>
+                                </span>
+                                <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                  {plata(Number(g.mov.monto))} · {etiquetaOrigenProp(g.origen, g.prop)}{' '}
+                                  → debe {g.otro.nombre} <span className="text-tinta">{plataExacta(g.quedaDebiendoOtro)}</span>
+                                </span>
+                              </li>
+                            ))
+                          )}
+                        </FuenteAuditoria>
+
                         {ajustesMes.length > 0 && (
-                          <div className="flex items-baseline justify-between gap-2 py-2">
-                            <span className="text-tinta-suave">Préstamos</span>
-                            <span className="text-right">
-                              {filaSaldo(desglose.diffPrestamos, desglose.p1, desglose.p2)}
-                            </span>
-                          </div>
+                          <FuenteAuditoria
+                            titulo="Préstamos"
+                            resumen={filaSaldo(auditoria.diffAjustes, auditoria.p1, auditoria.p2)}
+                          >
+                            {auditoria.ajustes.map((a) => (
+                              <li
+                                key={a.mov.id}
+                                className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                              >
+                                <span className="min-w-0 truncate">{a.mov.descripcion}</span>
+                                <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                  puso {a.pagador.nombre}{' '}
+                                  <span className="text-tinta">{plataExacta(a.monto)}</span> · 100% a
+                                  su favor
+                                </span>
+                              </li>
+                            ))}
+                          </FuenteAuditoria>
                         )}
+
                         {cuotasInternasActivas.length > 0 && (
-                          <div className="flex items-baseline justify-between gap-2 py-2">
-                            <span className="text-tinta-suave">Cuotas entre ustedes</span>
-                            <span className="text-right">
-                              {filaSaldo(desglose.diffCuotas, desglose.p1, desglose.p2)}
-                            </span>
-                          </div>
+                          <FuenteAuditoria
+                            titulo="Cuotas entre ustedes"
+                            resumen={
+                              esMesActual ? (
+                                filaSaldo(auditoria.diffCuotas, auditoria.p1, auditoria.p2)
+                              ) : (
+                                <span className="text-tinta-suave">no suman este mes</span>
+                              )
+                            }
+                          >
+                            {!esMesActual && (
+                              <li className="py-1 text-xs text-tinta-suave">
+                                Son las cuotas vigentes hoy, no las de {nombreMes(mes)}: solo
+                                cuentan en el neto del mes en curso (ver /deudas).
+                              </li>
+                            )}
+                            {auditoria.cuotas.map((c) => (
+                              <li
+                                key={c.deuda.id}
+                                className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                              >
+                                <span className="min-w-0 truncate">{c.deuda.descripcion}</span>
+                                <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                  {c.acreedor.nombre} recibe{' '}
+                                  <span className="text-tinta">{plataExacta(c.valorCuota)}</span>
+                                  /mes
+                                </span>
+                              </li>
+                            ))}
+                          </FuenteAuditoria>
                         )}
+
+                        <div className="flex items-baseline justify-between gap-2 border-t border-linea pt-2 text-sm font-semibold">
+                          <span>
+                            = Neto del mes
+                            {auditoria.incluyeCuotas && cuotasInternasActivas.length > 0
+                              ? ' (depto + préstamos + cuotas)'
+                              : ajustesMes.length > 0
+                                ? ' (depto + préstamos)'
+                                : ''}
+                          </span>
+                          <span>{filaSaldo(auditoria.diffTotal, auditoria.p1, auditoria.p2)}</span>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1109,6 +1142,33 @@ function GrupoDeudasResumen({ grupo }: { grupo: GrupoDeuda }) {
           </li>
         ))}
       </ul>
+    </details>
+  )
+}
+
+/** Una fuente del desglose auditable ("Gastos del depto", "Préstamos"…):
+ * el resultado siempre visible, y cada línea que lo compone al desplegar. */
+function FuenteAuditoria({
+  titulo,
+  resumen,
+  children,
+}: {
+  titulo: string
+  resumen: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <details className="group py-1">
+      <summary className="flex cursor-pointer list-none items-baseline justify-between gap-2 py-1">
+        <span className="text-tinta-suave">
+          {titulo}{' '}
+          <span className="inline-block text-xs text-tinta-suave transition-transform group-open:rotate-180">
+            ▾
+          </span>
+        </span>
+        <span className="text-right">{resumen}</span>
+      </summary>
+      <ul className="mt-1 divide-y divide-linea border-t border-linea pl-1">{children}</ul>
     </details>
   )
 }

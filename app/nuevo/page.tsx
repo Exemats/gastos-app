@@ -401,16 +401,20 @@ function NuevoGastoForm() {
     setGuardando(true)
     let r
     if (modo === 'plata') {
-      r = await guardarGasto(supabase, {
-        monto: montoFinal,
-        descripcion: descripcion.trim() || 'Préstamo',
-        categoria: null,
-        fecha,
-        esPersonal: false,
-        esAjuste: true,
-        tipo: 'gasto_depto',
-        pagadorId: pagadoPor || userId || '',
-      })
+      r = await guardarGasto(
+        supabase,
+        {
+          monto: montoFinal,
+          descripcion: descripcion.trim() || 'Préstamo',
+          categoria: null,
+          fecha,
+          esPersonal: false,
+          esAjuste: true,
+          tipo: 'gasto_depto',
+          pagadorId: pagadoPor || userId || '',
+        },
+        perfiles
+      )
     } else {
       if (!descripcion.trim()) {
         setGuardando(false)
@@ -423,19 +427,24 @@ function NuevoGastoForm() {
         return
       }
       const personal = division === 'personal'
-      r = await guardarGasto(supabase, {
-        monto: montoFinal,
-        descripcion: descripcion.trim(),
-        categoria,
-        fecha,
-        esPersonal: personal,
-        // la división la decide el selector (el catálogo solo la sugiere)
-        prop: division === 'mitad' ? 0.5 : null,
-        tipo: fijoElegido ? 'gasto_fijo' : 'gasto_depto',
-        // lo personal y lo que paga un tercero corren por cuenta de quien carga
-        pagadorId: personal || esTercero ? userId ?? '' : pagadoPor || userId || '',
-        fijo: fijoElegido,
-      })
+      r = await guardarGasto(
+        supabase,
+        {
+          monto: montoFinal,
+          descripcion: descripcion.trim(),
+          categoria,
+          fecha,
+          esPersonal: personal,
+          // la división la decide el selector (el catálogo solo la sugiere);
+          // undefined = sin regla explícita, se resuelve y congela abajo
+          prop: division === 'mitad' ? 0.5 : undefined,
+          tipo: fijoElegido ? 'gasto_fijo' : 'gasto_depto',
+          // lo personal y lo que paga un tercero corren por cuenta de quien carga
+          pagadorId: personal || esTercero ? userId ?? '' : pagadoPor || userId || '',
+          fijo: fijoElegido,
+        },
+        perfiles
+      )
     }
     setGuardando(false)
     if (!r.ok) {

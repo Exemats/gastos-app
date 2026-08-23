@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { GastoFijo } from './types'
+import type { GastoFijo, Profile } from './types'
 import { avisar } from './avisar'
 
 /**
@@ -56,9 +56,28 @@ export function parteTercero(monto: number, fijo: { prop_tercero?: number | null
   return Math.round(monto * Number(fijo.prop_tercero ?? 0.5) * 100) / 100
 }
 
+/**
+ * Resuelve la proporción a GUARDAR en la fila: nunca null. Si hay una
+ * regla explícita (personal, mitad, catálogo) se usa esa; si no ("según
+ * sus partes"), se congela el % del perfil del pagador en este momento,
+ * en vez de dejarlo en null para que quede "flotando" contra el % que el
+ * perfil tenga el día que se lea. Así cada movimiento queda auditable
+ * para siempre, aunque el % del perfil cambie más adelante.
+ */
+function resolverProp(
+  g: Parameters<typeof propPagador>[0],
+  pagadorId: string,
+  perfiles: Pick<Profile, 'id' | 'porcentaje'>[]
+): number {
+  const explicita = propPagador(g)
+  if (explicita != null) return explicita
+  return perfiles.find((p) => p.id === pagadorId)?.porcentaje ?? 0.5
+}
+
 export async function guardarGasto(
   supabase: SupabaseClient,
-  gasto: DatosGasto
+  gasto: DatosGasto,
+  perfiles: Pick<Profile, 'id' | 'porcentaje'>[]
 ): Promise<ResultadoGuardar> {
   const fijo = gasto.fijo ?? null
 
@@ -98,7 +117,10 @@ export async function guardarGasto(
         monto: gasto.monto,
         pagado_por: gasto.pagadorId,
         categoria: gasto.categoria ?? 'servicios',
-        prop_pagador: gasto.prop !== undefined ? gasto.prop : propPagador(gasto),
+        prop_pagador:
+          gasto.prop !== undefined
+            ? gasto.prop
+            : resolverProp(gasto, gasto.pagadorId, perfiles),
       })
       .select('id')
       .single()
@@ -138,7 +160,9 @@ export async function guardarGasto(
         ? { prop_pagador: 1, es_personal: true }
         : {
             prop_pagador:
-              gasto.prop !== undefined ? gasto.prop : propPagador(gasto),
+              gasto.prop !== undefined
+                ? gasto.prop
+                : resolverProp(gasto, gasto.pagadorId, perfiles),
           }),
     })
     .select('id')

@@ -9,9 +9,17 @@ import Descuento, { calcularDescuento } from '@/components/Descuento'
 
 type Division = 'partes' | 'mitad' | 'pagador' | 'custom'
 
-function divisionDe(m: Movimiento): Division {
+/**
+ * A qué división corresponde el % guardado. Antes "sus partes" se
+ * guardaba como null (se resolvía contra el % actual del perfil al
+ * leer); ahora se guarda ya resuelto, así que también cuenta como
+ * "partes" si coincide con el % del perfil de quien pagó.
+ */
+function divisionDe(m: Movimiento, perfiles: Profile[]): Division {
   if (m.prop_pagador == null) return 'partes'
   const p = Number(m.prop_pagador)
+  const propDePerfil = perfiles.find((x) => x.id === m.pagado_por)?.porcentaje
+  if (propDePerfil != null && p === Number(propDePerfil)) return 'partes'
   if (p === 0.5) return 'mitad'
   if (p === 1) return 'pagador'
   return 'custom'
@@ -40,7 +48,7 @@ export default function EditarMovimiento({
   const [fecha, setFecha] = useState(mov.fecha.slice(0, 10))
   const [categoria, setCategoria] = useState(mov.categoria ?? '')
   const [pagadoPor, setPagadoPor] = useState(mov.pagado_por)
-  const [division, setDivision] = useState<Division>(divisionDe(mov))
+  const [division, setDivision] = useState<Division>(divisionDe(mov, perfiles))
   const [personal, setPersonal] = useState(Boolean(mov.es_personal))
   // descuento ex-post: se olvidaron al cargar y lo aplican acá (queda el neto)
   const [conDescuento, setConDescuento] = useState(false)
@@ -68,10 +76,14 @@ export default function EditarMovimiento({
     if (!fecha) return setError('Falta la fecha.')
     if (!categoria) return setError('Elegí una categoría — si ninguna pega, está «otros».')
 
+    // "según sus partes" congela el % del pagador ahora mismo (no null):
+    // así el movimiento queda auditable aunque el % del perfil cambie después
+    const quienPaga = personal ? userId : pagadoPor
+    const propDePerfil = perfiles.find((p) => p.id === quienPaga)?.porcentaje ?? 0.5
     const prop = personal
       ? 1
       : division === 'partes'
-        ? null
+        ? propDePerfil
         : division === 'mitad'
           ? 0.5
           : division === 'pagador'

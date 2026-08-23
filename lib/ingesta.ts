@@ -37,7 +37,7 @@ export async function registrarGasto(
   const supabase = createAdminClient()
   const { data: perfiles, error: errorPerfiles } = await supabase
     .from('profiles')
-    .select('id, nombre, telefono')
+    .select('id, nombre, telefono, porcentaje')
   if (errorPerfiles || !perfiles?.length) {
     return { ok: false, mensaje: 'No pude leer los perfiles de la libreta.' }
   }
@@ -142,8 +142,11 @@ export async function registrarGasto(
     : descripcion
 
   // --- 4. insertar movimiento ---
-  // misma regla de división que la app (catálogo: 0.5 = mitades, null = % del perfil)
-  const prop = propPagador({ esPersonal, tipo, fijo: fijoCatalogo, mitad: esMitad })
+  // misma regla de división que la app (catálogo: 0.5 = mitades); sin regla
+  // explícita se congela el % actual del perfil del pagador (no se deja en
+  // null: así el movimiento queda auditable aunque el % cambie después)
+  const propRegla = propPagador({ esPersonal, tipo, fijo: fijoCatalogo, mitad: esMitad })
+  const prop = propRegla ?? Number(pagador.porcentaje)
   const { data: creado, error } = await supabase
     .from('movimientos')
     .insert({
