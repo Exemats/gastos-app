@@ -364,20 +364,14 @@ export default function ResumenPage() {
         lineas.push('', `*✓ Saldado el ${fechaCorta(cierre.saldado.created_at)}*`)
       } else {
         if (auditoria && hayDesglose) {
-          lineas.push('', 'Cómo se calculó:')
-          lineas.push(
-            `· Gastos del depto: ${lineaSaldo(auditoria.diffGastos, auditoria.p1, auditoria.p2)}`
-          )
-          if (ajustesMes.length > 0) {
+          lineas.push('', 'Cómo se calculó, por categoría:')
+          for (const grupo of auditoria.gruposPorCategoria) {
             lineas.push(
-              `· Préstamos: ${lineaSaldo(auditoria.diffAjustes, auditoria.p1, auditoria.p2)}`
-            )
-          }
-          if (cuotasInternasActivas.length > 0) {
-            lineas.push(
-              esMesActual
-                ? `· Cuotas entre ustedes: ${lineaSaldo(auditoria.diffCuotas, auditoria.p1, auditoria.p2)}`
-                : '· Cuotas entre ustedes: no suman este mes (son las vigentes hoy)'
+              `· ${grupo.categoria} (${plata(grupo.total)}): ${
+                grupo.incluidoEnTotal
+                  ? lineaSaldo(grupo.diff, auditoria.p1, auditoria.p2)
+                  : 'no suma este mes (son las vigentes hoy)'
+              }`
             )
           }
         }
@@ -565,99 +559,85 @@ export default function ResumenPage() {
                   {auditoria && hayDesglose && (
                     <div className="mb-3">
                       <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-tinta-suave">
-                        Cómo se calculó
+                        Cómo se calculó, por categoría
                       </p>
                       <div className="grid gap-1 rounded-lg border border-linea p-3">
-                        <FuenteAuditoria
-                          titulo="Gastos del depto"
-                          resumen={filaSaldo(auditoria.diffGastos, auditoria.p1, auditoria.p2)}
-                        >
-                          {auditoria.gastos.length === 0 ? (
-                            <li className="py-1 text-xs text-tinta-suave">Ninguno este mes.</li>
-                          ) : (
-                            auditoria.gastos.map((g) => (
-                              <li
-                                key={g.mov.id}
-                                className="flex items-baseline justify-between gap-2 py-1 text-xs"
-                              >
-                                <span className="min-w-0 truncate">
-                                  {g.mov.descripcion}{' '}
-                                  <span className="text-tinta-suave">
-                                    · pagó {g.pagador.nombre}
-                                  </span>
-                                </span>
-                                <span className="num shrink-0 pl-2 text-right text-tinta-suave">
-                                  {plata(Number(g.mov.monto))} · {etiquetaOrigenProp(g.origen, g.prop)}{' '}
-                                  → debe {g.otro.nombre} <span className="text-tinta">{plataExacta(g.quedaDebiendoOtro)}</span>
-                                </span>
-                              </li>
-                            ))
-                          )}
-                        </FuenteAuditoria>
-
-                        {ajustesMes.length > 0 && (
+                        {auditoria.gruposPorCategoria.map((grupo) => (
                           <FuenteAuditoria
-                            titulo="Préstamos"
-                            resumen={filaSaldo(auditoria.diffAjustes, auditoria.p1, auditoria.p2)}
-                          >
-                            {auditoria.ajustes.map((a) => (
-                              <li
-                                key={a.mov.id}
-                                className="flex items-baseline justify-between gap-2 py-1 text-xs"
-                              >
-                                <span className="min-w-0 truncate">{a.mov.descripcion}</span>
-                                <span className="num shrink-0 pl-2 text-right text-tinta-suave">
-                                  puso {a.pagador.nombre}{' '}
-                                  <span className="text-tinta">{plataExacta(a.monto)}</span> · 100% a
-                                  su favor
-                                </span>
-                              </li>
-                            ))}
-                          </FuenteAuditoria>
-                        )}
-
-                        {cuotasInternasActivas.length > 0 && (
-                          <FuenteAuditoria
-                            titulo="Cuotas entre ustedes"
+                            key={grupo.categoria}
+                            titulo={grupo.categoria}
                             resumen={
-                              esMesActual ? (
-                                filaSaldo(auditoria.diffCuotas, auditoria.p1, auditoria.p2)
-                              ) : (
-                                <span className="text-tinta-suave">no suman este mes</span>
-                              )
+                              <span className="inline-flex items-baseline gap-1.5">
+                                <span className="text-tinta-suave">{plata(grupo.total)}</span>
+                                {grupo.incluidoEnTotal ? (
+                                  filaSaldo(grupo.diff, auditoria.p1, auditoria.p2)
+                                ) : (
+                                  <span className="text-tinta-suave">no suma este mes</span>
+                                )}
+                              </span>
                             }
                           >
-                            {!esMesActual && (
+                            {!grupo.incluidoEnTotal && (
                               <li className="py-1 text-xs text-tinta-suave">
                                 Son las cuotas vigentes hoy, no las de {nombreMes(mes)}: solo
                                 cuentan en el neto del mes en curso (ver /deudas).
                               </li>
                             )}
-                            {auditoria.cuotas.map((c) => (
-                              <li
-                                key={c.deuda.id}
-                                className="flex items-baseline justify-between gap-2 py-1 text-xs"
-                              >
-                                <span className="min-w-0 truncate">{c.deuda.descripcion}</span>
-                                <span className="num shrink-0 pl-2 text-right text-tinta-suave">
-                                  {c.acreedor.nombre} recibe{' '}
-                                  <span className="text-tinta">{plataExacta(c.valorCuota)}</span>
-                                  /mes
-                                </span>
-                              </li>
-                            ))}
+                            {grupo.lineas.map((l) => {
+                              if (l.tipo === 'gasto') {
+                                return (
+                                  <li
+                                    key={l.mov.id}
+                                    className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                                  >
+                                    <span className="min-w-0 truncate">
+                                      {l.mov.descripcion}{' '}
+                                      <span className="text-tinta-suave">
+                                        · pagó {l.pagador.nombre}
+                                      </span>
+                                    </span>
+                                    <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                      {plata(Number(l.mov.monto))} · {etiquetaOrigenProp(l.origen, l.prop)}{' '}
+                                      → debe {l.otro.nombre}{' '}
+                                      <span className="text-tinta">{plataExacta(l.quedaDebiendoOtro)}</span>
+                                    </span>
+                                  </li>
+                                )
+                              }
+                              if (l.tipo === 'ajuste') {
+                                return (
+                                  <li
+                                    key={l.mov.id}
+                                    className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                                  >
+                                    <span className="min-w-0 truncate">{l.mov.descripcion}</span>
+                                    <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                      puso {l.pagador.nombre}{' '}
+                                      <span className="text-tinta">{plataExacta(l.monto)}</span> ·
+                                      100% a su favor
+                                    </span>
+                                  </li>
+                                )
+                              }
+                              return (
+                                <li
+                                  key={l.deuda.id}
+                                  className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                                >
+                                  <span className="min-w-0 truncate">{l.deuda.descripcion}</span>
+                                  <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                    {l.acreedor.nombre} recibe{' '}
+                                    <span className="text-tinta">{plataExacta(l.valorCuota)}</span>
+                                    /mes
+                                  </span>
+                                </li>
+                              )
+                            })}
                           </FuenteAuditoria>
-                        )}
+                        ))}
 
                         <div className="flex items-baseline justify-between gap-2 border-t border-linea pt-2 text-sm font-semibold">
-                          <span>
-                            = Neto del mes
-                            {auditoria.incluyeCuotas && cuotasInternasActivas.length > 0
-                              ? ' (depto + préstamos + cuotas)'
-                              : ajustesMes.length > 0
-                                ? ' (depto + préstamos)'
-                                : ''}
-                          </span>
+                          <span>= Neto del mes</span>
                           <span>{filaSaldo(auditoria.diffTotal, auditoria.p1, auditoria.p2)}</span>
                         </div>
                       </div>

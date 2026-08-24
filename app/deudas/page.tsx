@@ -274,15 +274,73 @@ function GrupoDeudas({
                     <span className="font-semibold text-verde">· saldada ✓</span>
                   )}
                 </p>
-                {d.activa && (
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {d.activa && (
+                    <button
+                      className="btn btn-secundario !px-3 !py-1.5 !text-sm"
+                      onClick={() => onPagar(d)}
+                    >
+                      {contexto === 'debes' ? 'Pagué' : 'Me pagó'}
+                    </button>
+                  )}
                   <button
-                    className="btn btn-secundario shrink-0 !px-3 !py-1.5 !text-sm"
-                    onClick={() => onPagar(d)}
+                    className="p-1 text-tinta-suave hover:text-birome"
+                    aria-label={`Corregir ${d.descripcion}`}
+                    onClick={() => {
+                      onEditar(editando === d.id ? null : d.id)
+                      onPedirBorrar(null)
+                    }}
                   >
-                    {contexto === 'debes' ? 'Pagué' : 'Me pagó'}
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
                   </button>
-                )}
+                  <button
+                    className="p-1 text-tinta-suave hover:text-rojo"
+                    aria-label={`Borrar ${d.descripcion}`}
+                    onClick={() => {
+                      onPedirBorrar(borrando === d.id ? null : d.id)
+                      onEditar(null)
+                    }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg>
+                  </button>
+                </div>
               </div>
+              {borrando === d.id && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-rojo-suave p-2 text-xs">
+                  <span>¿Borrar esta deuda?</span>
+                  <button
+                    className="rounded bg-rojo px-2 py-1 font-semibold text-white"
+                    onClick={() => onBorrar(d.id)}
+                  >
+                    {d.vinculo_id ? 'Solo esta' : 'Sí, borrar'}
+                  </button>
+                  {d.vinculo_id && (
+                    <button
+                      className="rounded bg-rojo px-2 py-1 font-semibold text-white"
+                      onClick={() => onBorrar(d.id, d.vinculo_id)}
+                    >
+                      Borrar las dos
+                    </button>
+                  )}
+                  <button
+                    className="rounded border border-linea px-2 py-1"
+                    onClick={() => onPedirBorrar(null)}
+                  >
+                    No
+                  </button>
+                </div>
+              )}
+              {editando === d.id && (
+                <EditarDeuda
+                  deuda={d}
+                  perfiles={perfiles}
+                  onDone={() => {
+                    onEditar(null)
+                    onCambio()
+                  }}
+                  onCancel={() => onEditar(null)}
+                />
+              )}
               <details className="group/detalle mt-1.5">
                 <summary className="cursor-pointer list-none text-xs text-tinta-suave underline underline-offset-2">
                   Detalles{' '}
@@ -322,63 +380,6 @@ function GrupoDeudas({
                     >
                       Deshacer la última cuota
                     </button>
-                  )}
-                  <div className="flex items-center gap-3">
-                    <button
-                      className="text-xs text-tinta-suave underline underline-offset-2 hover:text-birome"
-                      onClick={() => {
-                        onEditar(editando === d.id ? null : d.id)
-                        onPedirBorrar(null)
-                      }}
-                    >
-                      Corregir
-                    </button>
-                    {borrando === d.id ? (
-                      <span className="flex flex-wrap items-center gap-2 text-xs">
-                        <span>¿Borrar?</span>
-                        <button
-                          className="rounded bg-rojo px-2 py-1 font-semibold text-white"
-                          onClick={() => onBorrar(d.id)}
-                        >
-                          {d.vinculo_id ? 'Solo esta' : 'Sí'}
-                        </button>
-                        {d.vinculo_id && (
-                          <button
-                            className="rounded bg-rojo px-2 py-1 font-semibold text-white"
-                            onClick={() => onBorrar(d.id, d.vinculo_id)}
-                          >
-                            Las dos
-                          </button>
-                        )}
-                        <button
-                          className="rounded border border-linea px-2 py-1"
-                          onClick={() => onPedirBorrar(null)}
-                        >
-                          No
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        className="text-xs text-tinta-suave underline underline-offset-2 hover:text-rojo"
-                        onClick={() => {
-                          onPedirBorrar(d.id)
-                          onEditar(null)
-                        }}
-                      >
-                        Borrar
-                      </button>
-                    )}
-                  </div>
-                  {editando === d.id && (
-                    <EditarDeuda
-                      deuda={d}
-                      perfiles={perfiles}
-                      onDone={() => {
-                        onEditar(null)
-                        onCambio()
-                      }}
-                      onCancel={() => onEditar(null)}
-                    />
                   )}
                 </div>
               </details>
