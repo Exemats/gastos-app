@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
-import { calcularBalance, calcularBalanceCuotasInternas, plata, nombreMes, hoyArgentina } from '@/lib/format'
-import { coincideNombre } from '@/lib/parsear-gasto'
+import { plata, nombreMes, hoyArgentina } from '@/lib/format'
+import { calcularAuditoria } from '@/lib/auditoria'
+import { serviciosFaltantes } from '@/lib/servicios'
 import { deudasQueDebes, deudasQueTeDeben } from '@/lib/deudas'
 import type { Deuda, GastoFijo, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
@@ -62,23 +63,30 @@ export default async function Dashboard() {
   // su cuota de este mes cuenta como una 3ra fuente de saldo (junto con
   // gastos del depto y préstamos), solo para el mes en curso ---
   const deudasTodas = (deudas ?? []) as Deuda[]
-  const balanceCuotasInternas = calcularBalanceCuotasInternas(deudasTodas, perfilesOk)
+  const cuotasInternasActivas = deudasTodas.filter(
+    (d) => d.activa && d.acreedor_tipo === 'interno' && (d.deudor_tipo ?? 'interno') === 'interno'
+  )
 
   // --- saldo pendiente, mes por mes (cada gasto cuenta en el mes de su fecha) ---
   // Un mes "tachado" en meses_saldados ya se transfirió y no suma acá.
+  // Misma cuenta que /resumen (lib/auditoria.ts): el número grande de acá
+  // y el desglose de allá siempre tienen que coincidir.
   const saldadosOk = (saldados ?? []) as MesSaldado[]
   const saldadosSet = new Set(saldadosOk.map((s) => s.mes))
   const netoDelMes = (mes: string) => {
+    if (!yo || !otro) return 0
     const delMes = compartidos.filter((m) => m.fecha.startsWith(mes))
-    const puso = calcularBalance(delMes, perfilesOk)
-    if (mes === mesActual) {
-      for (const p of perfilesOk) {
-        puso.set(p.id, (puso.get(p.id) ?? 0) + (balanceCuotasInternas.get(p.id) ?? 0))
-      }
-    }
-    const miExtra = yo ? puso.get(yo.id) ?? 0 : 0
-    const suExtra = otro ? puso.get(otro.id) ?? 0 : 0
-    return miExtra - suExtra // > 0: el otro me debe ese mes
+    const gastosMes = delMes.filter((m) => !m.es_prestamo)
+    const ajustesMes = delMes.filter((m) => m.es_prestamo)
+    const auditoria = calcularAuditoria(
+      gastosMes,
+      ajustesMes,
+      cuotasInternasActivas,
+      yo,
+      otro,
+      mes === mesActual
+    )
+    return auditoria.diffTotal // > 0: el otro me debe ese mes
   }
   // el mes en curso siempre se evalúa, aunque todavía no tenga movimientos
   // (puede tener saldo solo por cuotas entre ustedes)
@@ -104,7 +112,7 @@ export default async function Dashboard() {
   // --- gasto del mes ---
   const movsMes = compartidos.filter((m) => m.fecha.startsWith(mesActual))
   const gastoMes = movsMes
-    .filter((m) => m.categoria !== 'ajuste')
+    .filter((m) => !m.es_prestamo)
     .reduce((acc, m) => acc + Number(m.monto), 0)
   const personalMes = personales
     .filter((m) => m.fecha.startsWith(mesActual))
@@ -120,24 +128,12 @@ export default async function Dashboard() {
 
   // --- fijos que faltan cargar este mes (luz, gas, expensas…) ---
   const fijosCatalogo = (fijos ?? []) as GastoFijo[]
-  const fijosPendientes = fijosCatalogo.filter((f) => {
-    if (f.paga_tercero) {
-      // Expensas: además del movimiento, siempre se crea junto la deuda
-      // con el tercero — alcanza con mirar esa
-      return !deudasTodas.some(
-        (d) =>
-          coincideNombre(d.descripcion, f.nombre) &&
-          (d.created_at?.startsWith(mesActual) ||
-            d.fecha_primera_cuota?.startsWith(mesActual))
-      )
-    }
-    return !movsMes.some((m) => coincideNombre(m.descripcion, f.nombre))
-  })
+  const fijosPendientes = serviciosFaltantes(mesActual, movsMes, deudasTodas, fijosCatalogo)
 
   // --- límites de categoría pasados este mes ---
   const porCategoriaMes = new Map<string, number>()
   for (const m of movsMes) {
-    if (m.categoria === 'ajuste') continue
+    if (m.es_prestamo) continue
     const c = m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
     porCategoriaMes.set(c, (porCategoriaMes.get(c) ?? 0) + Number(m.monto))
   }

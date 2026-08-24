@@ -15,6 +15,9 @@ export type Movimiento = {
   prop_pagador: number | null
   categoria: string | null
   es_personal: boolean
+  /** Plata directa entre ustedes (préstamo/devolución): 100% a favor de
+   * quien la puso, no es un gasto. Reemplaza la vieja categoria='ajuste'. */
+  es_prestamo: boolean
   created_at: string
 }
 
@@ -37,6 +40,12 @@ export type Deuda = {
   cuotas_restantes: number
   fecha_primera_cuota: string | null
   activa: boolean
+  /** Si esta deuda nació junto con un gasto del depto (ej: Expensas →
+   * Seba), el movimiento que la generó (migración v4). */
+  movimiento_id?: string | null
+  /** Si esta deuda se cargó "dividida" con la otra persona, el id de su
+   * par — la otra mitad (migración v4). Se editan/borran por separado. */
+  vinculo_id?: string | null
   created_at?: string
 }
 

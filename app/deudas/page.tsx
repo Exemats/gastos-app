@@ -9,6 +9,7 @@ import Descuento, { calcularDescuento } from '@/components/Descuento'
 import EditarDeuda from '@/components/EditarDeuda'
 import { useRealtime } from '@/lib/use-realtime'
 import { avisar } from '@/lib/avisar'
+import { crearCuotaDividida } from '@/lib/dividir'
 import {
   agruparDeudas,
   deudasQueDebes,
@@ -79,11 +80,14 @@ export default function DeudasPage() {
   const [editando, setEditando] = useState<string | null>(null)
   const [borrando, setBorrando] = useState<string | null>(null)
 
-  async function borrarDeuda(id: string) {
-    const { error } = await supabase.from('deudas').delete().eq('id', id)
+  async function borrarDeuda(id: string, tambienId?: string | null) {
+    const ids = tambienId ? [id, tambienId] : [id]
+    const { error } = await supabase.from('deudas').delete().in('id', ids)
     setBorrando(null)
     if (!error) cargar()
   }
+
+  const deudaPorId = (id: string) => deudas.find((d) => d.id === id) ?? null
 
   const visibles = deudas.filter((d) => (verSaldadas ? true : d.activa))
   const debes = agruparDeudas(deudasQueDebes(visibles, userId), (d) =>
@@ -151,6 +155,7 @@ export default function DeudasPage() {
                     perfiles={perfiles}
                     editando={editando}
                     borrando={borrando}
+                    resolverVinculo={deudaPorId}
                     onPagar={pagarCuota}
                     onReactivar={reactivar}
                     onEditar={setEditando}
@@ -175,6 +180,7 @@ export default function DeudasPage() {
                     perfiles={perfiles}
                     editando={editando}
                     borrando={borrando}
+                    resolverVinculo={deudaPorId}
                     onPagar={pagarCuota}
                     onReactivar={reactivar}
                     onEditar={setEditando}
@@ -207,6 +213,7 @@ function GrupoDeudas({
   perfiles,
   editando,
   borrando,
+  resolverVinculo,
   onPagar,
   onReactivar,
   onEditar,
@@ -220,10 +227,11 @@ function GrupoDeudas({
   perfiles: Profile[]
   editando: string | null
   borrando: string | null
+  resolverVinculo: (id: string) => Deuda | null
   onPagar: (d: Deuda) => void
   onReactivar: (d: Deuda) => void
   onEditar: (id: string | null) => void
-  onBorrar: (id: string) => void
+  onBorrar: (id: string, tambienId?: string | null) => void
   onPedirBorrar: (id: string | null) => void
   onCambio: () => void
 }) {
@@ -288,6 +296,16 @@ function GrupoDeudas({
                       desde {fechaCorta(d.fecha_primera_cuota)}
                     </p>
                   )}
+                  {d.movimiento_id && (
+                    <p className="text-xs text-tinta-suave">
+                      Nació de un gasto del depto ya cargado.
+                    </p>
+                  )}
+                  {d.vinculo_id && (
+                    <p className="text-xs text-tinta-suave">
+                      Ligada a «{resolverVinculo(d.vinculo_id)?.descripcion ?? '—'}».
+                    </p>
+                  )}
                   {d.activa && (
                     <div className="h-2 overflow-hidden rounded-full bg-birome-suave">
                       <div
@@ -316,14 +334,22 @@ function GrupoDeudas({
                       Corregir
                     </button>
                     {borrando === d.id ? (
-                      <span className="flex items-center gap-2 text-xs">
+                      <span className="flex flex-wrap items-center gap-2 text-xs">
                         <span>¿Borrar?</span>
                         <button
                           className="rounded bg-rojo px-2 py-1 font-semibold text-white"
                           onClick={() => onBorrar(d.id)}
                         >
-                          Sí
+                          {d.vinculo_id ? 'Solo esta' : 'Sí'}
                         </button>
+                        {d.vinculo_id && (
+                          <button
+                            className="rounded bg-rojo px-2 py-1 font-semibold text-white"
+                            onClick={() => onBorrar(d.id, d.vinculo_id)}
+                          >
+                            Las dos
+                          </button>
+                        )}
                         <button
                           className="rounded border border-linea px-2 py-1"
                           onClick={() => onPedirBorrar(null)}
@@ -519,47 +545,30 @@ function NuevaDeudaForm({
       }
     }
 
+    // se divide con el otro: además de la deuda real, una interna por su
+    // parte — el mismo patrón que usa la app para "gasto + deuda a un
+    // tercero" (ver lib/dividir.ts), acá aplicado a una deuda
+    const split =
+      puedeDividir && division !== 'propio' && otro
+        ? {
+            descripcion: `${descripcion.trim()} — parte de ${otro.nombre}`,
+            monto: Math.round(monto * propOtroDivision * 100) / 100,
+            cantidadCuotas: n,
+            fechaPrimeraCuota: primeraCuota || null,
+            acreedorId: personaInterna,
+            deudorId: otro.id,
+          }
+        : null
+
     setGuardando(true)
-    const { data: creada, error } = await supabase
-      .from('deudas')
-      .insert(datos)
-      .select('id')
-      .single()
-    if (error) {
-      setGuardando(false)
-      setError(error.message)
+    const r = await crearCuotaDividida(supabase, datos, split)
+    setGuardando(false)
+    if (!r.ok) {
+      setError(r.error)
       return
     }
-    if (creada) avisar({ tipo: 'deuda', id: creada.id })
-
-    // se divide con el otro: además de la deuda real, una interna por su
-    // parte — la misma lógica que ya suma al saldo del mes en /resumen
-    if (puedeDividir && division !== 'propio' && otro) {
-      const montoOtro = Math.round(monto * propOtroDivision * 100) / 100
-      const { data: creadaInterna, error: errorInterna } = await supabase
-        .from('deudas')
-        .insert({
-          descripcion: `${descripcion.trim()} — parte de ${otro.nombre}`,
-          monto_total: montoOtro,
-          cantidad_cuotas: n,
-          fecha_primera_cuota: primeraCuota || null,
-          acreedor_tipo: 'interno',
-          acreedor_profile: personaInterna,
-          deudor: otro.id,
-        })
-        .select('id')
-        .single()
-      setGuardando(false)
-      if (errorInterna) {
-        setError(
-          `Se anotó la deuda, pero falló la parte de ${otro.nombre}: ${errorInterna.message}`
-        )
-        return
-      }
-      if (creadaInterna) avisar({ tipo: 'deuda', id: creadaInterna.id })
-    } else {
-      setGuardando(false)
-    }
+    avisar({ tipo: 'deuda', id: r.deudaId })
+    if (r.deudaVinculadaId) avisar({ tipo: 'deuda', id: r.deudaVinculadaId })
     onCreada()
   }
 

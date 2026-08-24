@@ -13,7 +13,8 @@ import {
   mesShift,
 } from '@/lib/format'
 import { sinAcentos, parsearMonto } from '@/lib/parsear-gasto'
-import type { Deuda, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
+import type { Deuda, GastoFijo, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
+import { serviciosFaltantes } from '@/lib/servicios'
 import {
   agruparDeudas,
   deudasQueDebes,
@@ -41,6 +42,10 @@ export default function ResumenPage() {
   const [hayTachado, setHayTachado] = useState(true) // false si falta la migración
   const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
   const [hayPresupuestos, setHayPresupuestos] = useState(true)
+  const [fijosCatalogo, setFijosCatalogo] = useState<GastoFijo[]>([])
+  const [todasLasDeudas, setTodasLasDeudas] = useState<
+    Pick<Deuda, 'descripcion' | 'created_at' | 'fecha_primera_cuota'>[]
+  >([])
   const [userId, setUserId] = useState<string | null>(null)
   const [cargando, setCargando] = useState(true)
 
@@ -56,7 +61,7 @@ export default function ResumenPage() {
   const [limiteInput, setLimiteInput] = useState('')
 
   const cargar = useCallback(async () => {
-    const [{ data: u }, { data: m }, { data: d }, { data: p }, rSaldados, rPres] =
+    const [{ data: u }, { data: m }, { data: d }, { data: p }, rSaldados, rPres, rFijos, rDeudasTodas] =
       await Promise.all([
         supabase.auth.getUser(),
         supabase
@@ -68,6 +73,9 @@ export default function ResumenPage() {
         supabase.from('profiles').select('id, nombre, porcentaje'),
         supabase.from('meses_saldados').select('*'),
         supabase.from('presupuestos').select('*'),
+        supabase.from('gastos_fijos').select('*').eq('activo', true),
+        // todas (no solo activas): una ya saldada igual cuenta como "cargada ese mes"
+        supabase.from('deudas').select('descripcion, created_at, fecha_primera_cuota'),
       ])
     setUserId(u.user?.id ?? null)
     setMovs((m ?? []) as Movimiento[])
@@ -79,6 +87,8 @@ export default function ResumenPage() {
       ((rPres.data ?? []) as Presupuesto[]).map((x) => ({ ...x, monto: Number(x.monto) }))
     )
     setHayPresupuestos(!rPres.error)
+    setFijosCatalogo((rFijos.data ?? []) as GastoFijo[])
+    setTodasLasDeudas(rDeudasTodas.data ?? [])
     setCargando(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -91,12 +101,19 @@ export default function ResumenPage() {
   // --- movimientos del mes elegido ---
   const movsMes = useMemo(() => movs.filter((m) => m.fecha.startsWith(mes)), [movs, mes])
   const compMes = useMemo(
-    () => movsMes.filter((m) => !m.es_personal && m.categoria !== 'ajuste'),
+    () => movsMes.filter((m) => !m.es_personal && !m.es_prestamo),
     [movsMes]
   )
-  const ajustesMes = movsMes.filter((m) => !m.es_personal && m.categoria === 'ajuste')
+  const ajustesMes = movsMes.filter((m) => !m.es_personal && m.es_prestamo)
   // RLS ya esconde los personales del otro: estos son solo los tuyos
   const personalesMes = movsMes.filter((m) => m.es_personal && m.pagado_por === userId)
+
+  // --- ¿está todo cargado? antes de confiar en el neto y tacharlo, avisa
+  // si algún servicio del catálogo no tiene nada anotado este mes ---
+  const faltantesDelMes = useMemo(
+    () => serviciosFaltantes(mes, compMes, todasLasDeudas, fijosCatalogo),
+    [mes, compMes, todasLasDeudas, fijosCatalogo]
+  )
 
   const totalComp = compMes.reduce((a, m) => a + Number(m.monto), 0)
   const totalPersonal = personalesMes.reduce((a, m) => a + Number(m.monto), 0)
@@ -188,7 +205,7 @@ export default function ResumenPage() {
     const meses = Array.from({ length: 6 }, (_, i) => mesShift(mes, i - 5))
     return meses.map((m) => {
       const delMes = movs.filter(
-        (x) => x.fecha.startsWith(m) && !x.es_personal && x.categoria !== 'ajuste'
+        (x) => x.fecha.startsWith(m) && !x.es_personal && !x.es_prestamo
       )
       const porPerfil = perfiles.map((p) =>
         delMes
@@ -209,7 +226,7 @@ export default function ResumenPage() {
   const anio = mes.slice(0, 4)
   const anual = useMemo(() => {
     const delAnio = movs.filter(
-      (m) => m.fecha.startsWith(anio) && !m.es_personal && m.categoria !== 'ajuste'
+      (m) => m.fecha.startsWith(anio) && !m.es_personal && !m.es_prestamo
     )
     const total = delAnio.reduce((a, m) => a + Number(m.monto), 0)
     const mesesConDatos = new Set(delAnio.map((m) => m.fecha.slice(0, 7))).size
@@ -218,7 +235,9 @@ export default function ResumenPage() {
 
   // --- lista filtrable + búsqueda ---
   const categoriaDe = (m: Movimiento) =>
-    m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
+    m.es_prestamo
+      ? 'plata entre ustedes'
+      : m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
 
   // categorías presentes en el mes (para el filtro)
   const categoriasDelMes = useMemo(
@@ -241,17 +260,16 @@ export default function ResumenPage() {
     })
   }, [movsMes, filtro, filtroCat, filtroPagador, busqueda])
   const totalVisibles = visibles
-    .filter((m) => m.categoria !== 'ajuste')
+    .filter((m) => !m.es_prestamo)
     .reduce((a, m) => a + Number(m.monto), 0)
 
   // --- desplegables por categoría (para corregir) ---
   const grupos = useMemo(() => {
     const map = new Map<string, Movimiento[]>()
     for (const m of visibles) {
-      const key =
-        m.categoria === 'ajuste'
-          ? 'plata entre ustedes'
-          : m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
+      const key = m.es_prestamo
+        ? 'plata entre ustedes'
+        : m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
       map.set(key, [...(map.get(key) ?? []), m])
     }
     return [...map.entries()]
@@ -297,7 +315,7 @@ export default function ResumenPage() {
 
   const etiquetaDivision = (m: Movimiento) => {
     if (m.es_personal) return '🔒 personal'
-    if (m.categoria === 'ajuste') return 'saldo'
+    if (m.es_prestamo) return 'saldo'
     const o = origenProp(m, perfiles)
     if (o.tipo === 'partes') return 'partes'
     if (o.tipo === 'mitad') return 'mitad'
@@ -510,6 +528,30 @@ export default function ResumenPage() {
                   directo entre ustedes ({ajustesMes.length} préstamo
                   {ajustesMes.length === 1 ? '' : 's'}/devolución — ya cuentan en el neto).
                 </p>
+              )}
+
+              {/* Antes de confiar en el neto y tacharlo: ¿está todo cargado
+                  este mes? Vale para cualquier mes, no solo el actual. */}
+              {!cierre?.saldado && faltantesDelMes.length > 0 && (
+                <div className="mt-3 rounded-lg border border-ambar p-3 text-sm">
+                  <p className="font-semibold text-ambar">
+                    ⚠ Antes de tachar, revisá si falta cargar algo
+                  </p>
+                  <p className="mt-1 text-xs text-tinta-suave">
+                    No hay nada anotado de {nombreMes(mes)} para:{' '}
+                    <span className="font-medium text-tinta">
+                      {faltantesDelMes.map((f) => f.nombre).join(', ')}
+                    </span>
+                    . Si ya se pagaron pero no se cargaron, el neto de abajo no los está
+                    contando.
+                  </p>
+                  <Link
+                    href="/nuevo"
+                    className="mt-1.5 inline-block text-xs font-medium text-birome underline underline-offset-2"
+                  >
+                    Cargar lo que falta
+                  </Link>
+                </div>
               )}
 
               {/* Cierre del mes: a principio del mes siguiente se transfiere y se tacha */}

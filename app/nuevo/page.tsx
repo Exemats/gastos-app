@@ -229,7 +229,7 @@ function NuevoGastoForm() {
         supabase.from('gastos_fijos').select('*').eq('activo', true).order('nombre'),
         supabase
           .from('movimientos')
-          .select('descripcion, monto, categoria, es_personal')
+          .select('descripcion, monto, categoria, es_personal, es_prestamo')
           .order('created_at', { ascending: false })
           .limit(300),
       ])
@@ -247,12 +247,13 @@ function NuevoGastoForm() {
         monto: number
         categoria: string | null
         es_personal?: boolean
+        es_prestamo?: boolean
       }[]
       setSugerencias([...new Set(historial.map((m) => m.descripcion.trim()))].slice(0, 40))
       const cuenta = new Map<string, Frecuente & { veces: number }>()
       for (const m of historial) {
         const clave = sinAcentos(m.descripcion.trim())
-        if (!clave || m.categoria === 'ajuste') continue
+        if (!clave || m.es_prestamo) continue
         if (fijosOk.some((x) => coincideNombre(m.descripcion, x.nombre))) continue
         const ya = cuenta.get(clave)
         if (ya) ya.veces++

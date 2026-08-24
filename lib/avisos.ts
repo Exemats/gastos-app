@@ -1,7 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enviarPush } from './push'
-import { calcularBalance, calcularBalanceCuotasInternas, plata, nombreMes, hoyArgentina, mesShift } from './format'
+import { plata, nombreMes, hoyArgentina, mesShift } from './format'
 import { coincideNombre } from './parsear-gasto'
+import { calcularAuditoria } from './auditoria'
+import type { Deuda, Movimiento } from './types'
 
 /**
  * Qué se avisa y a quién. Server-only (usa el cliente admin).
@@ -33,19 +35,18 @@ export async function avisarMovimiento(
 
     const otros = perfiles.filter((p) => p.id !== actorId).map((p) => p.id)
     await enviarPush(admin, otros, {
-      // 'ajuste' = préstamo/devolución: no es un gasto, es plata entre los dos
-      titulo:
-        mov.categoria === 'ajuste'
-          ? `${nombreDe(perfiles, actorId)} anotó plata entre ustedes`
-          : `${nombreDe(perfiles, actorId)} anotó un gasto`,
+      titulo: mov.es_prestamo
+        ? `${nombreDe(perfiles, actorId)} anotó plata entre ustedes`
+        : `${nombreDe(perfiles, actorId)} anotó un gasto`,
       cuerpo: `${mov.descripcion} — ${plata(Number(mov.monto))}`,
       url: '/resumen',
       tag: 'gasto-nuevo',
     })
 
-    // ¿este gasto hizo cruzar el límite de su categoría?
+    // ¿este gasto hizo cruzar el límite de su categoría? (un préstamo no
+    // tiene categoría: mov.categoria ya da null y esto no sigue)
     const categoria = mov.categoria
-    if (!categoria || categoria === 'ajuste') return
+    if (!categoria) return
     const { data: pres } = await admin
       .from('presupuestos')
       .select('monto')
@@ -127,36 +128,34 @@ export async function netoDelMes(admin: SupabaseClient, mes: string) {
   const [{ data: movs }, perfiles, { data: deudas }] = await Promise.all([
     admin
       .from('movimientos')
-      .select('monto, pagado_por, prop_pagador, es_personal')
+      .select('*')
       .gte('fecha', `${mes}-01`)
       .lt('fecha', `${mesShift(mes, 1)}-01`),
     perfilesDe(admin),
-    admin
-      .from('deudas')
-      .select('activa, acreedor_tipo, acreedor_profile, valor_cuota')
-      .eq('activa', true)
-      .eq('acreedor_tipo', 'interno'),
+    admin.from('deudas').select('*').eq('activa', true).eq('acreedor_tipo', 'interno'),
   ])
   if (perfiles.length !== 2) return null
   const [p1, p2] = perfiles
-  const compartidos = (movs ?? []).filter((m) => !m.es_personal)
-  const puso = calcularBalance(compartidos, perfiles)
-  if (mes === hoyArgentina().slice(0, 7)) {
-    const cuotas = calcularBalanceCuotasInternas(
-      (deudas ?? []) as Parameters<typeof calcularBalanceCuotasInternas>[0],
-      perfiles
-    )
-    for (const p of perfiles) {
-      puso.set(p.id, (puso.get(p.id) ?? 0) + (cuotas.get(p.id) ?? 0))
-    }
-  }
-  const diff = (puso.get(p1.id) ?? 0) - (puso.get(p2.id) ?? 0)
-  if (Math.abs(diff) < 1) return null
-  return {
-    monto: Math.abs(diff),
-    deudor: diff > 0 ? p2 : p1,
-    acreedor: diff > 0 ? p1 : p2,
-  }
+  // misma cuenta que /resumen (lib/auditoria.ts): un solo lugar que sabe
+  // sumar gastos + préstamos + cuotas internas, para que lo que contesta
+  // el bot de WhatsApp nunca diga un número distinto del de la app
+  const compartidos = ((movs ?? []) as Movimiento[]).filter((m) => !m.es_personal)
+  const gastosMes = compartidos.filter((m) => !m.es_prestamo)
+  const ajustesMes = compartidos.filter((m) => m.es_prestamo)
+  const cuotasInternasActivas = ((deudas ?? []) as Deuda[]).filter(
+    (d) => (d.deudor_tipo ?? 'interno') === 'interno'
+  )
+  const incluyeCuotas = mes === hoyArgentina().slice(0, 7)
+  const auditoria = calcularAuditoria(
+    gastosMes,
+    ajustesMes,
+    cuotasInternasActivas,
+    p1,
+    p2,
+    incluyeCuotas
+  )
+  if (auditoria.monto < 1) return null
+  return { monto: auditoria.monto, deudor: auditoria.deudor, acreedor: auditoria.acreedor }
 }
 
 /** Texto de saldo para el bot de WhatsApp + el mes anterior si quedó por tachar. */
