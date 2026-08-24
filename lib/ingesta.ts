@@ -8,6 +8,7 @@ import {
 } from './parsear-gasto'
 import { hoyArgentina, nombreMes, plata } from './format'
 import { propPagador } from './guardar-gasto'
+import { crearGastoConTercero, parteDelTercero } from './dividir'
 import { avisarMovimiento, avisarDeuda } from './avisos'
 
 /**
@@ -37,7 +38,7 @@ export async function registrarGasto(
   const supabase = createAdminClient()
   const { data: perfiles, error: errorPerfiles } = await supabase
     .from('profiles')
-    .select('id, nombre, telefono')
+    .select('id, nombre, telefono, porcentaje')
   if (errorPerfiles || !perfiles?.length) {
     return { ok: false, mensaje: 'No pude leer los perfiles de la libreta.' }
   }
@@ -108,8 +109,9 @@ export async function registrarGasto(
         descripcion,
         monto,
         pagado_por: pagador.id,
-        categoria: 'ajuste',
+        categoria: null,
         prop_pagador: 0,
+        es_prestamo: true,
       })
       .select('id')
       .single()
@@ -141,53 +143,62 @@ export async function registrarGasto(
     ? `${descripcion} ${nombreMes(fecha.slice(0, 7))}`
     : descripcion
 
-  // --- 4. insertar movimiento ---
-  // misma regla de división que la app (catálogo: 0.5 = mitades, null = % del perfil)
-  const prop = propPagador({ esPersonal, tipo, fijo: fijoCatalogo, mitad: esMitad })
-  const { data: creado, error } = await supabase
-    .from('movimientos')
-    .insert({
-      tipo: esPersonal ? 'gasto_depto' : tipo,
-      fecha,
-      descripcion: descripcionFinal,
-      monto,
-      pagado_por: pagador.id,
-      // las categorías son obligatorias: sin pista, va a "otros"
-      categoria: categoria ?? (tipo === 'gasto_fijo' ? 'servicios' : 'otros'),
-      // es_personal va solo cuando hace falta: lo compartido funciona
-      // aunque la migración v2 todavía no se haya corrido
-      ...(esPersonal ? { prop_pagador: 1, es_personal: true } : { prop_pagador: prop }),
-    })
-    .select('id')
-    .single()
-  if (error) return { ok: false, mensaje: `Error al guardar: ${error.message}` }
-  if (creado && !esPersonal) await avisarMovimiento(supabase, creado.id, pagador.id)
+  // --- 4. insertar movimiento (y, si lo paga un tercero como Expensas →
+  // Seba, la deuda vinculada con él: mismo patrón que usa la app, un solo
+  // lugar que lo sabe hacer, ver lib/dividir.ts) ---
+  // misma regla de división que la app (catálogo: 0.5 = mitades); sin regla
+  // explícita se congela el % actual del perfil del pagador (no se deja en
+  // null: así el movimiento queda auditable aunque el % cambie después)
+  const propRegla = propPagador({ esPersonal, tipo, fijo: fijoCatalogo, mitad: esMitad })
+  const prop = propRegla ?? Number(pagador.porcentaje)
+  const categoriaFinal = categoria ?? (tipo === 'gasto_fijo' ? 'servicios' : 'otros')
 
-  // Lo paga un tercero (Expensas → Seba): además, la parte de quien le
-  // queda debiendo (tercero_deudor, o quien carga si no está fijado)
-  // se anota como deuda con él
   let mensajeDeuda = ''
-  if (fijoCatalogo?.paga_tercero) {
-    const parte =
-      Math.round(monto * Number(fijoCatalogo.prop_tercero ?? 0.5) * 100) / 100
-    const deudorId = fijoCatalogo.tercero_deudor ?? pagador.id
-    const { data: creada, error: errorDeuda } = await supabase
-      .from('deudas')
-      .insert({
+  if (!esPersonal && fijoCatalogo?.paga_tercero) {
+    const propTercero = Number(fijoCatalogo.prop_tercero ?? 0.5)
+    const r = await crearGastoConTercero(
+      supabase,
+      {
+        tipo,
+        fecha,
         descripcion: descripcionFinal,
-        acreedor_tipo: 'externo',
-        acreedor_nombre: fijoCatalogo.paga_tercero,
-        deudor: deudorId,
-        monto_total: parte,
-        cantidad_cuotas: 1,
-        fecha_primera_cuota: fecha,
+        monto,
+        pagadorId: pagador.id,
+        categoria: categoriaFinal,
+        propPagador: prop,
+      },
+      {
+        nombre: fijoCatalogo.paga_tercero,
+        prop: propTercero,
+        deudorId: fijoCatalogo.tercero_deudor ?? pagador.id,
+      }
+    )
+    if (!r.ok) return { ok: false, mensaje: `Error al guardar: ${r.error}` }
+    await avisarMovimiento(supabase, r.movimientoId, pagador.id)
+    await avisarDeuda(supabase, r.deudaId, pagador.id)
+    const deudorNombre =
+      perfiles.find((p) => p.id === (fijoCatalogo.tercero_deudor ?? pagador.id))?.nombre ??
+      pagador.nombre
+    mensajeDeuda = ` y ${plata(parteDelTercero(monto, propTercero))} quedó como deuda de ${deudorNombre} con ${fijoCatalogo.paga_tercero}`
+  } else {
+    const { data: creado, error } = await supabase
+      .from('movimientos')
+      .insert({
+        tipo: esPersonal ? 'gasto_depto' : tipo,
+        fecha,
+        descripcion: descripcionFinal,
+        monto,
+        pagado_por: pagador.id,
+        // las categorías son obligatorias: sin pista, va a "otros"
+        categoria: categoriaFinal,
+        // es_personal va solo cuando hace falta: lo compartido funciona
+        // aunque la migración v2 todavía no se haya corrido
+        ...(esPersonal ? { prop_pagador: 1, es_personal: true } : { prop_pagador: prop }),
       })
       .select('id')
       .single()
-    if (errorDeuda) return { ok: false, mensaje: `Error al guardar: ${errorDeuda.message}` }
-    if (creada) await avisarDeuda(supabase, creada.id, pagador.id)
-    const deudorNombre = perfiles.find((p) => p.id === deudorId)?.nombre ?? pagador.nombre
-    mensajeDeuda = ` y ${plata(parte)} quedó como deuda de ${deudorNombre} con ${fijoCatalogo.paga_tercero}`
+    if (error) return { ok: false, mensaje: `Error al guardar: ${error.message}` }
+    if (!esPersonal) await avisarMovimiento(supabase, creado.id, pagador.id)
   }
 
   const division = esPersonal

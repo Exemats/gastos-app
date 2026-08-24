@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { GastoFijo } from './types'
+import type { GastoFijo, Profile } from './types'
 import { avisar } from './avisar'
+import { crearGastoConTercero, parteDelTercero } from './dividir'
 
 /**
  * Guardado de un gasto desde el navegador: lo usan la carga rápida del
@@ -53,17 +54,36 @@ export function propPagador(g: {
 
 /** Parte del total que se le debe al tercero (Expensas → la mitad, a Seba). */
 export function parteTercero(monto: number, fijo: { prop_tercero?: number | null }) {
-  return Math.round(monto * Number(fijo.prop_tercero ?? 0.5) * 100) / 100
+  return parteDelTercero(monto, Number(fijo.prop_tercero ?? 0.5))
+}
+
+/**
+ * Resuelve la proporción a GUARDAR en la fila: nunca null. Si hay una
+ * regla explícita (personal, mitad, catálogo) se usa esa; si no ("según
+ * sus partes"), se congela el % del perfil del pagador en este momento,
+ * en vez de dejarlo en null para que quede "flotando" contra el % que el
+ * perfil tenga el día que se lea. Así cada movimiento queda auditable
+ * para siempre, aunque el % del perfil cambie más adelante.
+ */
+function resolverProp(
+  g: Parameters<typeof propPagador>[0],
+  pagadorId: string,
+  perfiles: Pick<Profile, 'id' | 'porcentaje'>[]
+): number {
+  const explicita = propPagador(g)
+  if (explicita != null) return explicita
+  return perfiles.find((p) => p.id === pagadorId)?.porcentaje ?? 0.5
 }
 
 export async function guardarGasto(
   supabase: SupabaseClient,
-  gasto: DatosGasto
+  gasto: DatosGasto,
+  perfiles: Pick<Profile, 'id' | 'porcentaje'>[]
 ): Promise<ResultadoGuardar> {
   const fijo = gasto.fijo ?? null
 
   // Préstamo o devolución: plata directa entre los dos. prop_pagador = 0
-  // (todo lo puesto es "de más") y categoría 'ajuste': cuenta en el neto
+  // (todo lo puesto es "de más") y es_prestamo = true: cuenta en el neto
   // del mes pero no como gasto.
   if (gasto.esAjuste) {
     const { data, error } = await supabase
@@ -74,8 +94,9 @@ export async function guardarGasto(
         descripcion: gasto.descripcion,
         monto: gasto.monto,
         pagado_por: gasto.pagadorId,
-        categoria: 'ajuste',
+        categoria: null,
         prop_pagador: 0,
+        es_prestamo: true,
       })
       .select('id')
       .single()
@@ -89,38 +110,27 @@ export async function guardarGasto(
   // y además la parte de quien le queda debiendo (tercero_deudor, o
   // quien carga si no está fijado) se anota como deuda con el tercero.
   if (!gasto.esPersonal && fijo?.paga_tercero) {
-    const { data: mov, error } = await supabase
-      .from('movimientos')
-      .insert({
+    const r = await crearGastoConTercero(
+      supabase,
+      {
         tipo: gasto.tipo,
         fecha: gasto.fecha,
         descripcion: gasto.descripcion,
         monto: gasto.monto,
-        pagado_por: gasto.pagadorId,
-        categoria: gasto.categoria ?? 'servicios',
-        prop_pagador: gasto.prop !== undefined ? gasto.prop : propPagador(gasto),
-      })
-      .select('id')
-      .single()
-    if (error) return { ok: false, error: error.message }
-    avisar({ tipo: 'gasto', id: mov.id })
-
-    const { data: deuda, error: errorDeuda } = await supabase
-      .from('deudas')
-      .insert({
-        descripcion: gasto.descripcion,
-        acreedor_tipo: 'externo',
-        acreedor_nombre: fijo.paga_tercero,
-        deudor: fijo.tercero_deudor ?? gasto.pagadorId,
-        monto_total: parteTercero(gasto.monto, fijo),
-        cantidad_cuotas: 1,
-        fecha_primera_cuota: gasto.fecha,
-      })
-      .select('id')
-      .single()
-    if (errorDeuda) return { ok: false, error: errorDeuda.message }
-    avisar({ tipo: 'deuda', id: deuda.id })
-    return { ok: true, clase: 'movimiento', id: mov.id, deudaId: deuda.id }
+        pagadorId: gasto.pagadorId,
+        categoria: gasto.categoria,
+        propPagador: gasto.prop ?? resolverProp(gasto, gasto.pagadorId, perfiles),
+      },
+      {
+        nombre: fijo.paga_tercero,
+        prop: Number(fijo.prop_tercero ?? 0.5),
+        deudorId: fijo.tercero_deudor ?? gasto.pagadorId,
+      }
+    )
+    if (!r.ok) return r
+    avisar({ tipo: 'gasto', id: r.movimientoId })
+    avisar({ tipo: 'deuda', id: r.deudaId })
+    return { ok: true, clase: 'movimiento', id: r.movimientoId, deudaId: r.deudaId }
   }
 
   const { data, error } = await supabase
@@ -136,10 +146,7 @@ export async function guardarGasto(
       // aunque la migración v2 todavía no se haya corrido
       ...(gasto.esPersonal
         ? { prop_pagador: 1, es_personal: true }
-        : {
-            prop_pagador:
-              gasto.prop !== undefined ? gasto.prop : propPagador(gasto),
-          }),
+        : { prop_pagador: gasto.prop ?? resolverProp(gasto, gasto.pagadorId, perfiles) }),
     })
     .select('id')
     .single()

@@ -1,5 +1,5 @@
 'use client'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -11,11 +11,11 @@ import {
   fechaCorta,
   hoyISO,
   mesShift,
-  calcularBalance,
-  calcularBalanceCuotasInternas,
 } from '@/lib/format'
 import { sinAcentos, parsearMonto } from '@/lib/parsear-gasto'
-import type { Deuda, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
+import { errorLegible } from '@/lib/errores'
+import type { Deuda, GastoFijo, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
+import { serviciosFaltantes } from '@/lib/servicios'
 import {
   agruparDeudas,
   deudasQueDebes,
@@ -24,6 +24,7 @@ import {
   etiquetaDeudor,
   type GrupoDeuda,
 } from '@/lib/deudas'
+import { calcularAuditoria, etiquetaOrigenProp, origenProp } from '@/lib/auditoria'
 import Nav from '@/components/Nav'
 import TacharMes from '@/components/TacharMes'
 import EditarMovimiento from '@/components/EditarMovimiento'
@@ -42,6 +43,10 @@ export default function ResumenPage() {
   const [hayTachado, setHayTachado] = useState(true) // false si falta la migración
   const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
   const [hayPresupuestos, setHayPresupuestos] = useState(true)
+  const [fijosCatalogo, setFijosCatalogo] = useState<GastoFijo[]>([])
+  const [todasLasDeudas, setTodasLasDeudas] = useState<
+    Pick<Deuda, 'descripcion' | 'created_at' | 'fecha_primera_cuota'>[]
+  >([])
   const [userId, setUserId] = useState<string | null>(null)
   const [cargando, setCargando] = useState(true)
 
@@ -55,9 +60,13 @@ export default function ResumenPage() {
   const [copiado, setCopiado] = useState(false)
   const [editandoLimite, setEditandoLimite] = useState<string | null>(null)
   const [limiteInput, setLimiteInput] = useState('')
+  const [confirmandoBorrarMes, setConfirmandoBorrarMes] = useState(false)
+  const [incluirPersonalBorrado, setIncluirPersonalBorrado] = useState(false)
+  const [borrandoMes, setBorrandoMes] = useState(false)
+  const [errorBorrarMes, setErrorBorrarMes] = useState('')
 
   const cargar = useCallback(async () => {
-    const [{ data: u }, { data: m }, { data: d }, { data: p }, rSaldados, rPres] =
+    const [{ data: u }, { data: m }, { data: d }, { data: p }, rSaldados, rPres, rFijos, rDeudasTodas] =
       await Promise.all([
         supabase.auth.getUser(),
         supabase
@@ -69,6 +78,9 @@ export default function ResumenPage() {
         supabase.from('profiles').select('id, nombre, porcentaje'),
         supabase.from('meses_saldados').select('*'),
         supabase.from('presupuestos').select('*'),
+        supabase.from('gastos_fijos').select('*').eq('activo', true),
+        // todas (no solo activas): una ya saldada igual cuenta como "cargada ese mes"
+        supabase.from('deudas').select('descripcion, created_at, fecha_primera_cuota'),
       ])
     setUserId(u.user?.id ?? null)
     setMovs((m ?? []) as Movimiento[])
@@ -80,6 +92,8 @@ export default function ResumenPage() {
       ((rPres.data ?? []) as Presupuesto[]).map((x) => ({ ...x, monto: Number(x.monto) }))
     )
     setHayPresupuestos(!rPres.error)
+    setFijosCatalogo((rFijos.data ?? []) as GastoFijo[])
+    setTodasLasDeudas(rDeudasTodas.data ?? [])
     setCargando(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -92,35 +106,22 @@ export default function ResumenPage() {
   // --- movimientos del mes elegido ---
   const movsMes = useMemo(() => movs.filter((m) => m.fecha.startsWith(mes)), [movs, mes])
   const compMes = useMemo(
-    () => movsMes.filter((m) => !m.es_personal && m.categoria !== 'ajuste'),
+    () => movsMes.filter((m) => !m.es_personal && !m.es_prestamo),
     [movsMes]
   )
-  const ajustesMes = movsMes.filter((m) => !m.es_personal && m.categoria === 'ajuste')
+  const ajustesMes = movsMes.filter((m) => !m.es_personal && m.es_prestamo)
   // RLS ya esconde los personales del otro: estos son solo los tuyos
   const personalesMes = movsMes.filter((m) => m.es_personal && m.pagado_por === userId)
 
+  // --- ¿está todo cargado? antes de confiar en el neto y tacharlo, avisa
+  // si algún servicio del catálogo no tiene nada anotado este mes ---
+  const faltantesDelMes = useMemo(
+    () => serviciosFaltantes(mes, compMes, todasLasDeudas, fijosCatalogo),
+    [mes, compMes, todasLasDeudas, fijosCatalogo]
+  )
+
   const totalComp = compMes.reduce((a, m) => a + Number(m.monto), 0)
   const totalPersonal = personalesMes.reduce((a, m) => a + Number(m.monto), 0)
-
-  // --- lo compartido, persona por persona: pagó / su parte / neto del mes ---
-  const porPersona = useMemo(() => {
-    const porId = new Map(perfiles.map((p) => [p.id, p]))
-    return perfiles.map((p) => {
-      let pago = 0
-      let suParte = 0
-      for (const m of compMes) {
-        const monto = Number(m.monto)
-        const prop = Number(m.prop_pagador ?? porId.get(m.pagado_por)?.porcentaje ?? 0.5)
-        if (m.pagado_por === p.id) {
-          pago += monto
-          suParte += monto * prop
-        } else {
-          suParte += monto * (1 - prop)
-        }
-      }
-      return { perfil: p, pago, suParte, neto: pago - suParte }
-    })
-  }, [perfiles, compMes])
 
   // --- categorías del mes ---
   const porCategoria = useMemo(() => {
@@ -144,16 +145,13 @@ export default function ResumenPage() {
     [deudas, userId, perfiles]
   )
 
-  // --- cierre del mes: neto real a transferir (incluye ajustes viejos) ---
-  const compartidosMes = useMemo(
-    () => movsMes.filter((m) => !m.es_personal),
-    [movsMes]
-  )
   const esMesActual = mes === hoyISO().slice(0, 7)
 
   // --- cuotas "entre ustedes": deudas activas tipo 'interno'. Su cuota de
   // este mes es la 3ra fuente de saldo (junto con gastos del depto y
-  // préstamos), solo aplica al mes en curso, igual que en el dashboard ---
+  // préstamos); solo suma al neto del mes EN CURSO porque no está atada
+  // a una fecha del mes sino a "cuánto toca pagar ahora" (ver incluyeCuotas
+  // en lib/auditoria.ts) ---
   const cuotasInternasActivas = useMemo(
     () =>
       deudas.filter(
@@ -161,50 +159,57 @@ export default function ResumenPage() {
       ),
     [deudas]
   )
-  const balanceCuotasInternas = useMemo(
-    () => calcularBalanceCuotasInternas(deudas, perfiles),
-    [deudas, perfiles]
-  )
 
-  const cierre = useMemo(() => {
+  // --- el desglose auditable del mes: única fuente de verdad de cómo se
+  // llega al neto (gastos del depto + préstamos + cuotas entre ustedes) ---
+  const auditoria = useMemo(() => {
     if (perfiles.length !== 2) return null
     const [p1, p2] = perfiles
-    const puso = calcularBalance(compartidosMes, perfiles)
-    let diff = (puso.get(p1.id) ?? 0) - (puso.get(p2.id) ?? 0)
-    if (esMesActual) {
-      diff += (balanceCuotasInternas.get(p1.id) ?? 0) - (balanceCuotasInternas.get(p2.id) ?? 0)
-    }
+    return calcularAuditoria(compMes, ajustesMes, cuotasInternasActivas, p1, p2, esMesActual)
+  }, [perfiles, compMes, ajustesMes, cuotasInternasActivas, esMesActual])
+
+  const cierre = useMemo(() => {
+    if (!auditoria) return null
     return {
-      deudor: diff > 0 ? p2 : p1,
-      acreedor: diff > 0 ? p1 : p2,
-      monto: Math.abs(diff),
+      deudor: auditoria.deudor,
+      acreedor: auditoria.acreedor,
+      monto: auditoria.monto,
       saldado: saldados.find((s) => s.mes === mes) ?? null,
     }
-  }, [perfiles, compartidosMes, saldados, mes, esMesActual, balanceCuotasInternas])
+  }, [auditoria, saldados, mes])
 
-  // --- desglose de las 3 fuentes de saldo del mes en curso ---
-  const desglose = useMemo(() => {
-    if (perfiles.length !== 2 || !esMesActual) return null
-    const [p1, p2] = perfiles
-    const depto = calcularBalance(compMes, perfiles)
-    const prestamos = calcularBalance(ajustesMes, perfiles)
-    return {
-      p1,
-      p2,
-      diffDepto: (depto.get(p1.id) ?? 0) - (depto.get(p2.id) ?? 0),
-      diffPrestamos: (prestamos.get(p1.id) ?? 0) - (prestamos.get(p2.id) ?? 0),
-      diffCuotas:
-        (balanceCuotasInternas.get(p1.id) ?? 0) - (balanceCuotasInternas.get(p2.id) ?? 0),
-    }
-  }, [perfiles, compMes, ajustesMes, balanceCuotasInternas, esMesActual])
-
+  // hay algo para desglosar línea por línea (aunque sea una sola fuente)
   const hayDesglose = Boolean(
-    desglose && (ajustesMes.length > 0 || cuotasInternasActivas.length > 0)
+    auditoria &&
+      (compMes.length > 0 || ajustesMes.length > 0 || cuotasInternasActivas.length > 0)
   )
 
   async function destachar() {
     const { error } = await supabase.from('meses_saldados').delete().eq('mes', mes)
     if (!error) cargar()
+  }
+
+  // --- borrar todos los movimientos de este mes, para volver a
+  // cargarlo de cero. Por rango de fecha: RLS ya impide que se borren
+  // personales ajenos aunque se pida incluirlos. ---
+  async function borrarMesCompleto() {
+    setErrorBorrarMes('')
+    setBorrandoMes(true)
+    let query = supabase
+      .from('movimientos')
+      .delete()
+      .gte('fecha', `${mes}-01`)
+      .lt('fecha', `${mesShift(mes, 1)}-01`)
+    if (!incluirPersonalBorrado) query = query.eq('es_personal', false)
+    const { error } = await query
+    setBorrandoMes(false)
+    if (error) {
+      setErrorBorrarMes(errorLegible(error.message))
+      return
+    }
+    setConfirmandoBorrarMes(false)
+    setIncluirPersonalBorrado(false)
+    cargar()
   }
 
   // --- presupuestos por categoría ---
@@ -228,7 +233,7 @@ export default function ResumenPage() {
     const meses = Array.from({ length: 6 }, (_, i) => mesShift(mes, i - 5))
     return meses.map((m) => {
       const delMes = movs.filter(
-        (x) => x.fecha.startsWith(m) && !x.es_personal && x.categoria !== 'ajuste'
+        (x) => x.fecha.startsWith(m) && !x.es_personal && !x.es_prestamo
       )
       const porPerfil = perfiles.map((p) =>
         delMes
@@ -249,7 +254,7 @@ export default function ResumenPage() {
   const anio = mes.slice(0, 4)
   const anual = useMemo(() => {
     const delAnio = movs.filter(
-      (m) => m.fecha.startsWith(anio) && !m.es_personal && m.categoria !== 'ajuste'
+      (m) => m.fecha.startsWith(anio) && !m.es_personal && !m.es_prestamo
     )
     const total = delAnio.reduce((a, m) => a + Number(m.monto), 0)
     const mesesConDatos = new Set(delAnio.map((m) => m.fecha.slice(0, 7))).size
@@ -258,7 +263,9 @@ export default function ResumenPage() {
 
   // --- lista filtrable + búsqueda ---
   const categoriaDe = (m: Movimiento) =>
-    m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
+    m.es_prestamo
+      ? 'plata entre ustedes'
+      : m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
 
   // categorías presentes en el mes (para el filtro)
   const categoriasDelMes = useMemo(
@@ -281,17 +288,16 @@ export default function ResumenPage() {
     })
   }, [movsMes, filtro, filtroCat, filtroPagador, busqueda])
   const totalVisibles = visibles
-    .filter((m) => m.categoria !== 'ajuste')
+    .filter((m) => !m.es_prestamo)
     .reduce((a, m) => a + Number(m.monto), 0)
 
   // --- desplegables por categoría (para corregir) ---
   const grupos = useMemo(() => {
     const map = new Map<string, Movimiento[]>()
     for (const m of visibles) {
-      const key =
-        m.categoria === 'ajuste'
-          ? 'plata entre ustedes'
-          : m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
+      const key = m.es_prestamo
+        ? 'plata entre ustedes'
+        : m.categoria ?? (m.tipo === 'gasto_fijo' ? 'servicios' : 'sin categoría')
       map.set(key, [...(map.get(key) ?? []), m])
     }
     return [...map.entries()]
@@ -335,18 +341,18 @@ export default function ResumenPage() {
     )
   }
 
-  const etiquetaDivision = (m: Movimiento) =>
-    m.es_personal
-      ? '🔒 personal'
-      : m.categoria === 'ajuste'
-        ? 'saldo'
-        : m.prop_pagador == null
-          ? 'partes'
-          : Number(m.prop_pagador) === 0.5
-            ? 'mitad'
-            : Number(m.prop_pagador) === 1
-              ? '100% pagador'
-              : `${Math.round(Number(m.prop_pagador) * 100)}% pagador`
+  const etiquetaDivision = (m: Movimiento) => {
+    if (m.es_personal) return '🔒 personal'
+    if (m.es_prestamo) return 'saldo'
+    const o = origenProp(m, perfiles)
+    if (o.tipo === 'partes') return 'partes'
+    if (o.tipo === 'mitad') return 'mitad'
+    if (o.tipo === 'pagador') return '100% pagador'
+    const prop = Number(
+      m.prop_pagador ?? perfiles.find((p) => p.id === m.pagado_por)?.porcentaje ?? 0.5
+    )
+    return `${Math.round(prop * 100)}% pagador`
+  }
 
   function exportarCSV() {
     const filas = visibles.map((m) => [
@@ -378,26 +384,22 @@ export default function ResumenPage() {
     const titulo = nombreMes(mes)
     const lineas = [`📒 *${titulo.charAt(0).toUpperCase() + titulo.slice(1)}* — La libreta`, '']
     lineas.push(`Compartido: ${plata(totalComp)} (${compMes.length} movimientos)`)
-    for (const { perfil, pago, suParte } of porPersona) {
+    for (const { perfil, pago, suParte } of auditoria?.porPersonaGastos ?? []) {
       lineas.push(`· ${perfil.nombre} pagó ${plata(pago)} · su parte ${plata(suParte)}`)
     }
     if (cierre) {
       if (cierre.saldado) {
         lineas.push('', `*✓ Saldado el ${fechaCorta(cierre.saldado.created_at)}*`)
       } else {
-        if (desglose && hayDesglose) {
-          lineas.push('', 'Saldo del mes:')
-          lineas.push(
-            `· Gastos del depto: ${lineaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}`
-          )
-          if (ajustesMes.length > 0) {
+        if (auditoria && hayDesglose) {
+          lineas.push('', 'Cómo se calculó, por categoría:')
+          for (const grupo of auditoria.gruposPorCategoria) {
             lineas.push(
-              `· Préstamos: ${lineaSaldo(desglose.diffPrestamos, desglose.p1, desglose.p2)}`
-            )
-          }
-          if (cuotasInternasActivas.length > 0) {
-            lineas.push(
-              `· Cuotas entre ustedes: ${lineaSaldo(desglose.diffCuotas, desglose.p1, desglose.p2)}`
+              `· ${grupo.categoria} (${plata(grupo.total)}): ${
+                grupo.incluidoEnTotal
+                  ? lineaSaldo(grupo.diff, auditoria.p1, auditoria.p2)
+                  : 'no suma este mes (son las vigentes hoy)'
+              }`
             )
           }
         }
@@ -501,6 +503,66 @@ export default function ResumenPage() {
               </button>
             </div>
 
+            {/* Borrar todo el mes: para volver a cargarlo de cero */}
+            {movsMes.length > 0 && (
+              <div className="mb-4">
+                {!confirmandoBorrarMes ? (
+                  <button
+                    className="w-full text-center text-xs text-tinta-suave underline underline-offset-2 hover:text-rojo"
+                    onClick={() => setConfirmandoBorrarMes(true)}
+                  >
+                    🗑 Borrar todo {nombreMes(mes)} (para cargarlo de cero)
+                  </button>
+                ) : (
+                  <div className="card border-rojo p-3 text-sm">
+                    <p className="font-semibold text-rojo">
+                      ¿Borrar los {movsMes.filter((m) => !m.es_personal).length} movimientos
+                      compartidos de {nombreMes(mes)}?
+                    </p>
+                    <p className="mt-1 text-xs text-tinta-suave">
+                      Gastos, servicios y préstamos de ese mes. No se puede deshacer. No toca
+                      deudas ni cuotas (eso se maneja en /deudas).
+                    </p>
+                    {personalesMes.length > 0 && (
+                      <label className="mt-2 flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={incluirPersonalBorrado}
+                          onChange={(e) => setIncluirPersonalBorrado(e.target.checked)}
+                        />
+                        <span>
+                          También mis {personalesMes.length} gastos personales de este mes 🔒
+                        </span>
+                      </label>
+                    )}
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        className="rounded bg-rojo px-3 py-1.5 text-xs font-semibold text-white"
+                        disabled={borrandoMes}
+                        onClick={borrarMesCompleto}
+                      >
+                        {borrandoMes ? 'Borrando…' : 'Sí, borrar todo'}
+                      </button>
+                      <button
+                        className="rounded border border-linea px-3 py-1.5 text-xs"
+                        disabled={borrandoMes}
+                        onClick={() => {
+                          setConfirmandoBorrarMes(false)
+                          setIncluirPersonalBorrado(false)
+                          setErrorBorrarMes('')
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                    {errorBorrarMes && (
+                      <p className="mt-2 text-xs text-rojo">{errorBorrarMes}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Compartido por persona */}
             <section className="card mb-4 p-4">
               <div className="flex items-baseline justify-between">
@@ -511,7 +573,7 @@ export default function ResumenPage() {
                 <p className="mt-2 text-sm text-tinta-suave">Sin gastos compartidos este mes.</p>
               ) : (
                 <div className="mt-3 grid gap-2">
-                  {porPersona.map(({ perfil, pago, suParte, neto }) => (
+                  {(auditoria?.porPersonaGastos ?? []).map(({ perfil, pago, suParte, neto }) => (
                     <div key={perfil.id} className="rounded-lg bg-birome-suave/60 p-3">
                       <div className="flex items-baseline justify-between">
                         <p className="font-semibold">
@@ -550,41 +612,122 @@ export default function ResumenPage() {
                 </p>
               )}
 
+              {/* Antes de confiar en el neto y tacharlo: ¿está todo cargado
+                  este mes? Vale para cualquier mes, no solo el actual. */}
+              {!cierre?.saldado && faltantesDelMes.length > 0 && (
+                <div className="mt-3 rounded-lg border border-ambar p-3 text-sm">
+                  <p className="font-semibold text-ambar">
+                    ⚠ Antes de tachar, revisá si falta cargar algo
+                  </p>
+                  <p className="mt-1 text-xs text-tinta-suave">
+                    No hay nada anotado de {nombreMes(mes)} para:{' '}
+                    <span className="font-medium text-tinta">
+                      {faltantesDelMes.map((f) => f.nombre).join(', ')}
+                    </span>
+                    . Si ya se pagaron pero no se cargaron, el neto de abajo no los está
+                    contando.
+                  </p>
+                  <Link
+                    href="/nuevo"
+                    className="mt-1.5 inline-block text-xs font-medium text-birome underline underline-offset-2"
+                  >
+                    Cargar lo que falta
+                  </Link>
+                </div>
+              )}
+
               {/* Cierre del mes: a principio del mes siguiente se transfiere y se tacha */}
               {cierre &&
                 hayTachado &&
-                (compartidosMes.length > 0 ||
+                (compMes.length > 0 ||
+                  ajustesMes.length > 0 ||
                   cierre.saldado ||
                   (esMesActual && cuotasInternasActivas.length > 0)) && (
                 <div className="mt-4 border-t border-linea pt-3 text-sm">
-                  {desglose && hayDesglose && (
+                  {auditoria && hayDesglose && (
                     <div className="mb-3">
                       <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-tinta-suave">
-                        Saldo del mes, por fuente
+                        Cómo se calculó, por categoría
                       </p>
-                      <div className="divide-y divide-linea rounded-lg border border-linea px-3">
-                        <div className="flex items-baseline justify-between gap-2 py-2">
-                          <span className="text-tinta-suave">Gastos del depto</span>
-                          <span className="text-right">
-                            {filaSaldo(desglose.diffDepto, desglose.p1, desglose.p2)}
-                          </span>
+                      <div className="grid gap-1 rounded-lg border border-linea p-3">
+                        {auditoria.gruposPorCategoria.map((grupo) => (
+                          <FuenteAuditoria
+                            key={grupo.categoria}
+                            titulo={grupo.categoria}
+                            resumen={
+                              <span className="inline-flex items-baseline gap-1.5">
+                                <span className="text-tinta-suave">{plata(grupo.total)}</span>
+                                {grupo.incluidoEnTotal ? (
+                                  filaSaldo(grupo.diff, auditoria.p1, auditoria.p2)
+                                ) : (
+                                  <span className="text-tinta-suave">no suma este mes</span>
+                                )}
+                              </span>
+                            }
+                          >
+                            {!grupo.incluidoEnTotal && (
+                              <li className="py-1 text-xs text-tinta-suave">
+                                Son las cuotas vigentes hoy, no las de {nombreMes(mes)}: solo
+                                cuentan en el neto del mes en curso (ver /deudas).
+                              </li>
+                            )}
+                            {grupo.lineas.map((l) => {
+                              if (l.tipo === 'gasto') {
+                                return (
+                                  <li
+                                    key={l.mov.id}
+                                    className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                                  >
+                                    <span className="min-w-0 truncate">
+                                      {l.mov.descripcion}{' '}
+                                      <span className="text-tinta-suave">
+                                        · pagó {l.pagador.nombre}
+                                      </span>
+                                    </span>
+                                    <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                      {plata(Number(l.mov.monto))} · {etiquetaOrigenProp(l.origen, l.prop)}{' '}
+                                      → debe {l.otro.nombre}{' '}
+                                      <span className="text-tinta">{plataExacta(l.quedaDebiendoOtro)}</span>
+                                    </span>
+                                  </li>
+                                )
+                              }
+                              if (l.tipo === 'ajuste') {
+                                return (
+                                  <li
+                                    key={l.mov.id}
+                                    className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                                  >
+                                    <span className="min-w-0 truncate">{l.mov.descripcion}</span>
+                                    <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                      puso {l.pagador.nombre}{' '}
+                                      <span className="text-tinta">{plataExacta(l.monto)}</span> ·
+                                      100% a su favor
+                                    </span>
+                                  </li>
+                                )
+                              }
+                              return (
+                                <li
+                                  key={l.deuda.id}
+                                  className="flex items-baseline justify-between gap-2 py-1 text-xs"
+                                >
+                                  <span className="min-w-0 truncate">{l.deuda.descripcion}</span>
+                                  <span className="num shrink-0 pl-2 text-right text-tinta-suave">
+                                    {l.acreedor.nombre} recibe{' '}
+                                    <span className="text-tinta">{plataExacta(l.valorCuota)}</span>
+                                    /mes
+                                  </span>
+                                </li>
+                              )
+                            })}
+                          </FuenteAuditoria>
+                        ))}
+
+                        <div className="flex items-baseline justify-between gap-2 border-t border-linea pt-2 text-sm font-semibold">
+                          <span>= Neto del mes</span>
+                          <span>{filaSaldo(auditoria.diffTotal, auditoria.p1, auditoria.p2)}</span>
                         </div>
-                        {ajustesMes.length > 0 && (
-                          <div className="flex items-baseline justify-between gap-2 py-2">
-                            <span className="text-tinta-suave">Préstamos</span>
-                            <span className="text-right">
-                              {filaSaldo(desglose.diffPrestamos, desglose.p1, desglose.p2)}
-                            </span>
-                          </div>
-                        )}
-                        {cuotasInternasActivas.length > 0 && (
-                          <div className="flex items-baseline justify-between gap-2 py-2">
-                            <span className="text-tinta-suave">Cuotas entre ustedes</span>
-                            <span className="text-right">
-                              {filaSaldo(desglose.diffCuotas, desglose.p1, desglose.p2)}
-                            </span>
-                          </div>
-                        )}
                       </div>
                     </div>
                   )}
@@ -1109,6 +1252,33 @@ function GrupoDeudasResumen({ grupo }: { grupo: GrupoDeuda }) {
           </li>
         ))}
       </ul>
+    </details>
+  )
+}
+
+/** Una fuente del desglose auditable ("Gastos del depto", "Préstamos"…):
+ * el resultado siempre visible, y cada línea que lo compone al desplegar. */
+function FuenteAuditoria({
+  titulo,
+  resumen,
+  children,
+}: {
+  titulo: string
+  resumen: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <details className="group py-1">
+      <summary className="flex cursor-pointer list-none items-baseline justify-between gap-2 py-1">
+        <span className="text-tinta-suave">
+          {titulo}{' '}
+          <span className="inline-block text-xs text-tinta-suave transition-transform group-open:rotate-180">
+            ▾
+          </span>
+        </span>
+        <span className="text-right">{resumen}</span>
+      </summary>
+      <ul className="mt-1 divide-y divide-linea border-t border-linea pl-1">{children}</ul>
     </details>
   )
 }

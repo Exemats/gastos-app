@@ -70,19 +70,23 @@ export default function CargaRapida({
     const pagadorId = g.esPersonal ? userId : pagador.id
 
     setGuardando(true)
-    const res = await guardarGasto(supabase, {
-      monto: g.monto,
-      descripcion,
-      // las categorías son obligatorias: sin pista, va a "otros"
-      categoria: g.categoria ?? (fijo ? 'servicios' : 'otros'),
-      fecha,
-      esPersonal: g.esPersonal,
-      mitad: g.esMitad,
-      esAjuste: g.esAjuste,
-      tipo,
-      pagadorId,
-      fijo,
-    })
+    const res = await guardarGasto(
+      supabase,
+      {
+        monto: g.monto,
+        descripcion,
+        // las categorías son obligatorias: sin pista, va a "otros"
+        categoria: g.categoria ?? (fijo ? 'servicios' : 'otros'),
+        fecha,
+        esPersonal: g.esPersonal,
+        mitad: g.esMitad,
+        esAjuste: g.esAjuste,
+        tipo,
+        pagadorId,
+        fijo,
+      },
+      perfiles
+    )
     setGuardando(false)
     if (!res.ok) {
       setError(errorLegible(res.error))

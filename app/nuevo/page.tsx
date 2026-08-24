@@ -1,5 +1,6 @@
 'use client'
 import { Suspense, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { CATEGORIAS, type GastoFijo, type Profile } from '@/lib/types'
@@ -228,7 +229,7 @@ function NuevoGastoForm() {
         supabase.from('gastos_fijos').select('*').eq('activo', true).order('nombre'),
         supabase
           .from('movimientos')
-          .select('descripcion, monto, categoria, es_personal')
+          .select('descripcion, monto, categoria, es_personal, es_prestamo')
           .order('created_at', { ascending: false })
           .limit(300),
       ])
@@ -246,12 +247,13 @@ function NuevoGastoForm() {
         monto: number
         categoria: string | null
         es_personal?: boolean
+        es_prestamo?: boolean
       }[]
       setSugerencias([...new Set(historial.map((m) => m.descripcion.trim()))].slice(0, 40))
       const cuenta = new Map<string, Frecuente & { veces: number }>()
       for (const m of historial) {
         const clave = sinAcentos(m.descripcion.trim())
-        if (!clave || m.categoria === 'ajuste') continue
+        if (!clave || m.es_prestamo) continue
         if (fijosOk.some((x) => coincideNombre(m.descripcion, x.nombre))) continue
         const ya = cuenta.get(clave)
         if (ya) ya.veces++
@@ -401,16 +403,20 @@ function NuevoGastoForm() {
     setGuardando(true)
     let r
     if (modo === 'plata') {
-      r = await guardarGasto(supabase, {
-        monto: montoFinal,
-        descripcion: descripcion.trim() || 'Préstamo',
-        categoria: null,
-        fecha,
-        esPersonal: false,
-        esAjuste: true,
-        tipo: 'gasto_depto',
-        pagadorId: pagadoPor || userId || '',
-      })
+      r = await guardarGasto(
+        supabase,
+        {
+          monto: montoFinal,
+          descripcion: descripcion.trim() || 'Préstamo',
+          categoria: null,
+          fecha,
+          esPersonal: false,
+          esAjuste: true,
+          tipo: 'gasto_depto',
+          pagadorId: pagadoPor || userId || '',
+        },
+        perfiles
+      )
     } else {
       if (!descripcion.trim()) {
         setGuardando(false)
@@ -423,19 +429,24 @@ function NuevoGastoForm() {
         return
       }
       const personal = division === 'personal'
-      r = await guardarGasto(supabase, {
-        monto: montoFinal,
-        descripcion: descripcion.trim(),
-        categoria,
-        fecha,
-        esPersonal: personal,
-        // la división la decide el selector (el catálogo solo la sugiere)
-        prop: division === 'mitad' ? 0.5 : null,
-        tipo: fijoElegido ? 'gasto_fijo' : 'gasto_depto',
-        // lo personal y lo que paga un tercero corren por cuenta de quien carga
-        pagadorId: personal || esTercero ? userId ?? '' : pagadoPor || userId || '',
-        fijo: fijoElegido,
-      })
+      r = await guardarGasto(
+        supabase,
+        {
+          monto: montoFinal,
+          descripcion: descripcion.trim(),
+          categoria,
+          fecha,
+          esPersonal: personal,
+          // la división la decide el selector (el catálogo solo la sugiere);
+          // undefined = sin regla explícita, se resuelve y congela abajo
+          prop: division === 'mitad' ? 0.5 : undefined,
+          tipo: fijoElegido ? 'gasto_fijo' : 'gasto_depto',
+          // lo personal y lo que paga un tercero corren por cuenta de quien carga
+          pagadorId: personal || esTercero ? userId ?? '' : pagadoPor || userId || '',
+          fijo: fijoElegido,
+        },
+        perfiles
+      )
     }
     setGuardando(false)
     if (!r.ok) {
@@ -609,23 +620,37 @@ function NuevoGastoForm() {
               </div>
               {/* servicios despliega las subcategorías del catálogo: un tap
                   precarga descripción, monto estimado y la división de la casa */}
-              {categoria === 'servicios' && fijos.length > 0 && (
+              {categoria === 'servicios' && (
                 <>
-                  <p className="mb-1 mt-2 text-xs text-tinta-suave">¿Cuál?</p>
-                  <div className="flex flex-wrap gap-2">
-                    {fijos.map((f) => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        className="chip !text-[13px]"
-                        data-activo={fijoElegido?.id === f.id}
-                        onClick={() => elegirServicio(f)}
-                      >
-                        {f.nombre}
-                        {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
-                      </button>
-                    ))}
-                  </div>
+                  {fijos.length > 0 ? (
+                    <>
+                      <p className="mb-1 mt-2 text-xs text-tinta-suave">¿Cuál?</p>
+                      <div className="flex flex-wrap gap-2">
+                        {fijos.map((f) => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            className="chip !text-[13px]"
+                            data-activo={fijoElegido?.id === f.id}
+                            onClick={() => elegirServicio(f)}
+                          >
+                            {f.nombre}
+                            {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-xs text-tinta-suave">
+                      Todavía no cargaste ningún servicio en el catálogo.
+                    </p>
+                  )}
+                  <Link
+                    href="/ajustes"
+                    className="mt-1.5 inline-block text-xs text-birome underline underline-offset-2"
+                  >
+                    Gestionar catálogo de servicios
+                  </Link>
                 </>
               )}
             </div>

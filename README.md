@@ -38,8 +38,12 @@ instalable en el celular.
   alguna categoría pasó su límite; cuotas del mes, tus personales del mes y
   últimos movimientos.
 - **Resumen (`/resumen`)**: mes por mes, quién pagó cuánto de lo compartido,
-  la parte que le tocaba a cada uno y el neto del mes; el estado del cierre
-  (saldado ✓ / a transferir / en curso, con deshacer); evolución de los
+  la parte que le tocaba a cada uno y el neto del mes; **"Cómo se calculó"**
+  desglosa cada gasto, préstamo y cuota interna del mes (monto, % aplicado y
+  de dónde sale, cuánto le queda debiendo cada uno) hasta llegar al neto
+  final — para cualquier mes, no solo el actual; si algún servicio del
+  catálogo no tiene nada cargado ese mes, avisa antes de tachar; el estado
+  del cierre (saldado ✓ / a transferir / en curso, con deshacer); evolución de los
   últimos 6 meses apilada por persona, comparativa con el mes anterior y
   acumulado del año; gastos por categoría con **límites mensuales
   opcionales** (lápiz para definirlos; la barra pasa a ámbar al 80% y a rojo
@@ -80,8 +84,15 @@ instalable en el celular.
   que lo tachen) y "⚠ delivery pasó el límite". Cada uno las activa con un
   botón en el inicio, por dispositivo.
 - **Deudas (`/deudas`)**: cuotas con progreso, "Pagué una cuota" con deshacer,
-  deudas a terceros o entre ustedes. La deuda nueva también admite el check
-  de descuento (se anota el total neto y las cuotas salen de ahí).
+  deudas a terceros o entre ustedes, **editar y borrar** cualquier deuda (lápiz
+  en Detalles). La deuda nueva también admite el check de descuento (se anota
+  el total neto y las cuotas salen de ahí) y, si se debe a un tercero, la
+  opción **"¿Cómo se divide?"**: si no es 100% tuya, se crea además una cuota
+  interna con la otra persona por su parte — vinculada, se ve en Detalles y se
+  puede borrar junto con la principal.
+- **Ajustes (`/ajustes`)**: el catálogo de servicios fijos (alta, baja y edición
+  completa — nombre, monto estimado, vencimiento, división, tercero que lo
+  paga) y el % de reparto entre ustedes, todo desde la app en vez de SQL.
 - **Descuentos de promos**: en gastos, cuotas y edición hay un check "Tuvo
   descuento"; recién al marcarlo aparecen el % y el tope de reintegro (si
   hay), y se guarda **el neto exacto**. Si te olvidaste al cargar, se aplica
@@ -102,6 +113,11 @@ Abrí http://localhost:3000 → te redirige a `/login`. Necesitás `.env.local`
 
 ## Puesta al día (si venís de la versión anterior)
 
+0. **Correr `docs/migracion_v4.sql`** (idempotente). Agrega `movimientos.es_prestamo`
+   (reemplaza la vieja convención `categoria = 'ajuste'` para préstamos/devoluciones)
+   y `deudas.movimiento_id` / `deudas.vinculo_id` (para poder ver de dónde salió
+   cada deuda y cuáles se cargaron "divididas" entre ustedes). No borra ni
+   renombra nada.
 1. **Correr `docs/migracion_v2.sql`** en Supabase > SQL Editor (idempotente).
    Agrega `es_personal`, `profiles.telefono`, la tabla `meses_saldados` (el
    tachado), las reglas de división de los fijos (servicios mitad y mitad,
