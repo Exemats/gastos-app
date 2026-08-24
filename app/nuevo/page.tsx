@@ -1,5 +1,6 @@
 'use client'
 import { Suspense, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { CATEGORIAS, type GastoFijo, type Profile } from '@/lib/types'
@@ -618,23 +619,37 @@ function NuevoGastoForm() {
               </div>
               {/* servicios despliega las subcategorías del catálogo: un tap
                   precarga descripción, monto estimado y la división de la casa */}
-              {categoria === 'servicios' && fijos.length > 0 && (
+              {categoria === 'servicios' && (
                 <>
-                  <p className="mb-1 mt-2 text-xs text-tinta-suave">¿Cuál?</p>
-                  <div className="flex flex-wrap gap-2">
-                    {fijos.map((f) => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        className="chip !text-[13px]"
-                        data-activo={fijoElegido?.id === f.id}
-                        onClick={() => elegirServicio(f)}
-                      >
-                        {f.nombre}
-                        {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
-                      </button>
-                    ))}
-                  </div>
+                  {fijos.length > 0 ? (
+                    <>
+                      <p className="mb-1 mt-2 text-xs text-tinta-suave">¿Cuál?</p>
+                      <div className="flex flex-wrap gap-2">
+                        {fijos.map((f) => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            className="chip !text-[13px]"
+                            data-activo={fijoElegido?.id === f.id}
+                            onClick={() => elegirServicio(f)}
+                          >
+                            {f.nombre}
+                            {f.paga_tercero ? ` (${f.paga_tercero})` : ''}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-xs text-tinta-suave">
+                      Todavía no cargaste ningún servicio en el catálogo.
+                    </p>
+                  )}
+                  <Link
+                    href="/ajustes"
+                    className="mt-1.5 inline-block text-xs text-birome underline underline-offset-2"
+                  >
+                    Gestionar catálogo de servicios
+                  </Link>
                 </>
               )}
             </div>

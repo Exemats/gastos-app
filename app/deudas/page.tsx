@@ -6,6 +6,7 @@ import { parsearMonto } from '@/lib/parsear-gasto'
 import type { Deuda, Profile } from '@/lib/types'
 import Nav from '@/components/Nav'
 import Descuento, { calcularDescuento } from '@/components/Descuento'
+import EditarDeuda from '@/components/EditarDeuda'
 import { useRealtime } from '@/lib/use-realtime'
 import { avisar } from '@/lib/avisar'
 import {
@@ -75,6 +76,15 @@ export default function DeudasPage() {
     if (!error) cargar()
   }
 
+  const [editando, setEditando] = useState<string | null>(null)
+  const [borrando, setBorrando] = useState<string | null>(null)
+
+  async function borrarDeuda(id: string) {
+    const { error } = await supabase.from('deudas').delete().eq('id', id)
+    setBorrando(null)
+    if (!error) cargar()
+  }
+
   const visibles = deudas.filter((d) => (verSaldadas ? true : d.activa))
   const debes = agruparDeudas(deudasQueDebes(visibles, userId), (d) =>
     etiquetaAcreedor(d, perfiles)
@@ -138,8 +148,15 @@ export default function DeudasPage() {
                     grupo={g}
                     contexto="debes"
                     abierto={esEscritorio}
+                    perfiles={perfiles}
+                    editando={editando}
+                    borrando={borrando}
                     onPagar={pagarCuota}
                     onReactivar={reactivar}
+                    onEditar={setEditando}
+                    onBorrar={borrarDeuda}
+                    onPedirBorrar={setBorrando}
+                    onCambio={cargar}
                   />
                 ))}
               </div>
@@ -155,8 +172,15 @@ export default function DeudasPage() {
                     grupo={g}
                     contexto="te-deben"
                     abierto={esEscritorio}
+                    perfiles={perfiles}
+                    editando={editando}
+                    borrando={borrando}
                     onPagar={pagarCuota}
                     onReactivar={reactivar}
+                    onEditar={setEditando}
+                    onBorrar={borrarDeuda}
+                    onPedirBorrar={setBorrando}
+                    onCambio={cargar}
                   />
                 ))}
               </div>
@@ -180,14 +204,28 @@ function GrupoDeudas({
   grupo,
   contexto,
   abierto,
+  perfiles,
+  editando,
+  borrando,
   onPagar,
   onReactivar,
+  onEditar,
+  onBorrar,
+  onPedirBorrar,
+  onCambio,
 }: {
   grupo: GrupoDeuda
   contexto: 'debes' | 'te-deben'
   abierto: boolean
+  perfiles: Profile[]
+  editando: string | null
+  borrando: string | null
   onPagar: (d: Deuda) => void
   onReactivar: (d: Deuda) => void
+  onEditar: (id: string | null) => void
+  onBorrar: (id: string) => void
+  onPedirBorrar: (id: string | null) => void
+  onCambio: () => void
 }) {
   return (
     <details className="card group p-4" open={abierto}>
@@ -266,6 +304,55 @@ function GrupoDeudas({
                     >
                       Deshacer la última cuota
                     </button>
+                  )}
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="text-xs text-tinta-suave underline underline-offset-2 hover:text-birome"
+                      onClick={() => {
+                        onEditar(editando === d.id ? null : d.id)
+                        onPedirBorrar(null)
+                      }}
+                    >
+                      Corregir
+                    </button>
+                    {borrando === d.id ? (
+                      <span className="flex items-center gap-2 text-xs">
+                        <span>¿Borrar?</span>
+                        <button
+                          className="rounded bg-rojo px-2 py-1 font-semibold text-white"
+                          onClick={() => onBorrar(d.id)}
+                        >
+                          Sí
+                        </button>
+                        <button
+                          className="rounded border border-linea px-2 py-1"
+                          onClick={() => onPedirBorrar(null)}
+                        >
+                          No
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        className="text-xs text-tinta-suave underline underline-offset-2 hover:text-rojo"
+                        onClick={() => {
+                          onPedirBorrar(d.id)
+                          onEditar(null)
+                        }}
+                      >
+                        Borrar
+                      </button>
+                    )}
+                  </div>
+                  {editando === d.id && (
+                    <EditarDeuda
+                      deuda={d}
+                      perfiles={perfiles}
+                      onDone={() => {
+                        onEditar(null)
+                        onCambio()
+                      }}
+                      onCancel={() => onEditar(null)}
+                    />
                   )}
                 </div>
               </details>
@@ -352,6 +439,9 @@ function NuevaDeudaForm({
   const [modoMonto, setModoMonto] = useState<'total' | 'cuota'>('total')
   const [montoTotal, setMontoTotal] = useState('')
   const [cuotas, setCuotas] = useState('')
+  // solo aplica cuando "debemos" a un tercero: la parte del otro queda
+  // como una segunda deuda interna (cuota entre ustedes), automática
+  const [division, setDivision] = useState<'propio' | 'partes' | 'mitad'>('propio')
   const [primeraCuota, setPrimeraCuota] = useState('')
   const [conDescuento, setConDescuento] = useState(false)
   const [descuentoPct, setDescuentoPct] = useState('')
@@ -373,7 +463,15 @@ function NuevaDeudaForm({
     setDireccion(d)
     setTerceroTipo('externo')
     setTerceroNombre('')
+    setDivision('propio')
   }
+
+  const puedeDividir = direccion === 'debemos' && terceroTipo === 'externo' && Boolean(otro)
+  const propOtroDivision = division === 'mitad' ? 0.5 : otro?.porcentaje ?? 0.5
+  const montoOtroDivision =
+    puedeDividir && division !== 'propio'
+      ? Math.round(montoBase * propOtroDivision * 100) / 100
+      : 0
 
   async function crear(e: React.FormEvent) {
     e.preventDefault()
@@ -427,12 +525,42 @@ function NuevaDeudaForm({
       .insert(datos)
       .select('id')
       .single()
-    setGuardando(false)
-    if (error) setError(error.message)
-    else {
-      if (creada) avisar({ tipo: 'deuda', id: creada.id })
-      onCreada()
+    if (error) {
+      setGuardando(false)
+      setError(error.message)
+      return
     }
+    if (creada) avisar({ tipo: 'deuda', id: creada.id })
+
+    // se divide con el otro: además de la deuda real, una interna por su
+    // parte — la misma lógica que ya suma al saldo del mes en /resumen
+    if (puedeDividir && division !== 'propio' && otro) {
+      const montoOtro = Math.round(monto * propOtroDivision * 100) / 100
+      const { data: creadaInterna, error: errorInterna } = await supabase
+        .from('deudas')
+        .insert({
+          descripcion: `${descripcion.trim()} — parte de ${otro.nombre}`,
+          monto_total: montoOtro,
+          cantidad_cuotas: n,
+          fecha_primera_cuota: primeraCuota || null,
+          acreedor_tipo: 'interno',
+          acreedor_profile: personaInterna,
+          deudor: otro.id,
+        })
+        .select('id')
+        .single()
+      setGuardando(false)
+      if (errorInterna) {
+        setError(
+          `Se anotó la deuda, pero falló la parte de ${otro.nombre}: ${errorInterna.message}`
+        )
+        return
+      }
+      if (creadaInterna) avisar({ tipo: 'deuda', id: creadaInterna.id })
+    } else {
+      setGuardando(false)
+    }
+    onCreada()
   }
 
   return (
@@ -513,6 +641,45 @@ function NuevaDeudaForm({
           {direccion === 'debemos' ? 'Acreedor' : 'Deudor'}:{' '}
           <span className="font-semibold">{otro?.nombre ?? '—'}</span>
         </p>
+      )}
+
+      {puedeDividir && (
+        <div>
+          <p className="mb-1 text-sm font-medium">¿Cómo se divide?</p>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              className="chip text-center"
+              data-activo={division === 'propio'}
+              onClick={() => setDivision('propio')}
+            >
+              100% mío
+            </button>
+            <button
+              type="button"
+              className="chip text-center"
+              data-activo={division === 'partes'}
+              onClick={() => setDivision('partes')}
+            >
+              Sus partes
+            </button>
+            <button
+              type="button"
+              className="chip text-center"
+              data-activo={division === 'mitad'}
+              onClick={() => setDivision('mitad')}
+            >
+              50/50
+            </button>
+          </div>
+          <p className="mt-1.5 text-xs text-tinta-suave">
+            {division === 'propio'
+              ? 'Corre entera por tu cuenta: no genera nada entre ustedes.'
+              : `Se anota entera con ${terceroNombre || 'el tercero'}, y además queda ` +
+                `una cuota interna: ${otro?.nombre ?? 'el otro'} te debe su parte` +
+                (montoOtroDivision > 0 ? ` (${plata(montoOtroDivision)} en total).` : '.')}
+          </p>
+        </div>
       )}
 
       <div className="grid grid-cols-2 gap-2">
