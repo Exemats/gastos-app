@@ -13,6 +13,7 @@ import {
   mesShift,
 } from '@/lib/format'
 import { sinAcentos, parsearMonto } from '@/lib/parsear-gasto'
+import { errorLegible } from '@/lib/errores'
 import type { Deuda, GastoFijo, MesSaldado, Movimiento, Presupuesto, Profile } from '@/lib/types'
 import { serviciosFaltantes } from '@/lib/servicios'
 import {
@@ -59,6 +60,10 @@ export default function ResumenPage() {
   const [copiado, setCopiado] = useState(false)
   const [editandoLimite, setEditandoLimite] = useState<string | null>(null)
   const [limiteInput, setLimiteInput] = useState('')
+  const [confirmandoBorrarMes, setConfirmandoBorrarMes] = useState(false)
+  const [incluirPersonalBorrado, setIncluirPersonalBorrado] = useState(false)
+  const [borrandoMes, setBorrandoMes] = useState(false)
+  const [errorBorrarMes, setErrorBorrarMes] = useState('')
 
   const cargar = useCallback(async () => {
     const [{ data: u }, { data: m }, { data: d }, { data: p }, rSaldados, rPres, rFijos, rDeudasTodas] =
@@ -182,6 +187,29 @@ export default function ResumenPage() {
   async function destachar() {
     const { error } = await supabase.from('meses_saldados').delete().eq('mes', mes)
     if (!error) cargar()
+  }
+
+  // --- borrar todos los movimientos de este mes, para volver a
+  // cargarlo de cero. Por rango de fecha: RLS ya impide que se borren
+  // personales ajenos aunque se pida incluirlos. ---
+  async function borrarMesCompleto() {
+    setErrorBorrarMes('')
+    setBorrandoMes(true)
+    let query = supabase
+      .from('movimientos')
+      .delete()
+      .gte('fecha', `${mes}-01`)
+      .lt('fecha', `${mesShift(mes, 1)}-01`)
+    if (!incluirPersonalBorrado) query = query.eq('es_personal', false)
+    const { error } = await query
+    setBorrandoMes(false)
+    if (error) {
+      setErrorBorrarMes(errorLegible(error.message))
+      return
+    }
+    setConfirmandoBorrarMes(false)
+    setIncluirPersonalBorrado(false)
+    cargar()
   }
 
   // --- presupuestos por categoría ---
@@ -474,6 +502,66 @@ export default function ResumenPage() {
                 ›
               </button>
             </div>
+
+            {/* Borrar todo el mes: para volver a cargarlo de cero */}
+            {movsMes.length > 0 && (
+              <div className="mb-4">
+                {!confirmandoBorrarMes ? (
+                  <button
+                    className="w-full text-center text-xs text-tinta-suave underline underline-offset-2 hover:text-rojo"
+                    onClick={() => setConfirmandoBorrarMes(true)}
+                  >
+                    🗑 Borrar todo {nombreMes(mes)} (para cargarlo de cero)
+                  </button>
+                ) : (
+                  <div className="card border-rojo p-3 text-sm">
+                    <p className="font-semibold text-rojo">
+                      ¿Borrar los {movsMes.filter((m) => !m.es_personal).length} movimientos
+                      compartidos de {nombreMes(mes)}?
+                    </p>
+                    <p className="mt-1 text-xs text-tinta-suave">
+                      Gastos, servicios y préstamos de ese mes. No se puede deshacer. No toca
+                      deudas ni cuotas (eso se maneja en /deudas).
+                    </p>
+                    {personalesMes.length > 0 && (
+                      <label className="mt-2 flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={incluirPersonalBorrado}
+                          onChange={(e) => setIncluirPersonalBorrado(e.target.checked)}
+                        />
+                        <span>
+                          También mis {personalesMes.length} gastos personales de este mes 🔒
+                        </span>
+                      </label>
+                    )}
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        className="rounded bg-rojo px-3 py-1.5 text-xs font-semibold text-white"
+                        disabled={borrandoMes}
+                        onClick={borrarMesCompleto}
+                      >
+                        {borrandoMes ? 'Borrando…' : 'Sí, borrar todo'}
+                      </button>
+                      <button
+                        className="rounded border border-linea px-3 py-1.5 text-xs"
+                        disabled={borrandoMes}
+                        onClick={() => {
+                          setConfirmandoBorrarMes(false)
+                          setIncluirPersonalBorrado(false)
+                          setErrorBorrarMes('')
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                    {errorBorrarMes && (
+                      <p className="mt-2 text-xs text-rojo">{errorBorrarMes}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Compartido por persona */}
             <section className="card mb-4 p-4">
